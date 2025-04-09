@@ -1000,7 +1000,7 @@ struct numa_folio_stat {
 
 
 extern struct xarray folio_stat_xa;
-
+extern static bool folio_stat_xa_initialized;
 
 static inline void set_migrate_count(struct numa_folio_stat *stat, int v)
 {

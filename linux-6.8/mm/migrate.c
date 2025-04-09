@@ -2689,6 +2689,8 @@ out:
 #endif /* CONFIG_NUMA */
 
 DEFINE_XARRAY(folio_stat_xa);
+static bool folio_stat_xa_initialized;
+
 
 static int node_pfn_stats_show(struct seq_file *m, void *v)
 {
@@ -2806,6 +2808,7 @@ static const struct file_operations folio_log_fops = {
 static int __init folio_debugfs_init(void)
 {
     xa_init_flags(&folio_stat_xa, XA_FLAGS_LOCK_IRQ);
+	folio_stat_xa_initialized = true;
 
     debugfs_root = debugfs_create_dir("numa_folio", NULL);
     if (!debugfs_root)

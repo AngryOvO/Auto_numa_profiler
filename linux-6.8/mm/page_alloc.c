@@ -4659,7 +4659,7 @@ EXPORT_SYMBOL(get_zeroed_page);
 	 unsigned long pfn = page_to_pfn(page);
 	 void *stat_entry;
 
-	 if(folio_stat_xa)
+	 if(folio_stat_xa_initialized)
 	 {
 		xa_lock(&folio_stat_xa);
 	 	stat_entry = xa_erase(&folio_stat_xa, pfn);
