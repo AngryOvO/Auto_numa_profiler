@@ -1013,32 +1013,6 @@ static inline int get_migrate_count(struct numa_folio_stat *stat)
     return atomic_read(&stat->current_migrate_count);
 }
 
-static struct numa_folio_stat *get_or_create_stat(struct folio *newfolio, struct folio *srcfolio)
-{
-    struct numa_folio_stat *stat;
-    unsigned long dst_pfn = folio_pfn(newfolio);
-    unsigned long source_pfn = folio_pfn(srcfolio);
-    int ret;
-
-    xa_lock(&folio_stat_xa);
-    stat = xa_load(&folio_stat_xa, dst_pfn);
-    if (!stat) {
-        stat = kmalloc(sizeof(*stat), GFP_ATOMIC);
-        if (stat) {
-            stat->dst_pfn = dst_pfn;
-            stat->source_pfn = source_pfn;
-            atomic_set(&stat->current_migrate_count, folio_migrate_count(newfolio));
-
-            ret = xa_insert(&folio_stat_xa, dst_pfn, stat, GFP_ATOMIC);
-            if (ret) {
-                kfree(stat);
-                stat = NULL;
-            }
-        }
-    } 
-    xa_unlock(&folio_stat_xa);
-    return stat;
-}
 // [hayong] auto numa profiling
 
 #define MM_MT_FLAGS	(MT_FLAGS_ALLOC_RANGE | MT_FLAGS_LOCK_EXTERN | \

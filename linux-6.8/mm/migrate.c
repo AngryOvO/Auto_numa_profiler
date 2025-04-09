@@ -92,6 +92,7 @@
 static pid_t target_pid = -1;
 static struct task_struct *numa_log_task;
 static int log_file_index = 0;
+static struct numa_folio_stat *get_or_create_stat(struct folio *newfolio, struct folio *srcfolio);
 
 
 bool isolate_movable_page(struct page *page, isolate_mode_t mode)
@@ -2819,7 +2820,32 @@ static void __exit folio_debugfs_exit(void)
     pr_info("debugfs for folio stats removed\n");
 }
 
+static struct numa_folio_stat *get_or_create_stat(struct folio *newfolio, struct folio *srcfolio)
+{
+    struct numa_folio_stat *stat;
+    unsigned long dst_pfn = folio_pfn(newfolio);
+    unsigned long source_pfn = folio_pfn(srcfolio);
+    int ret;
 
+    xa_lock(&folio_stat_xa);
+    stat = xa_load(&folio_stat_xa, dst_pfn);
+    if (!stat) {
+        stat = kmalloc(sizeof(*stat), GFP_ATOMIC);
+        if (stat) {
+            stat->dst_pfn = dst_pfn;
+            stat->source_pfn = source_pfn;
+            atomic_set(&stat->current_migrate_count, folio_migrate_count(newfolio));
+
+            ret = xa_insert(&folio_stat_xa, dst_pfn, stat, GFP_ATOMIC);
+            if (ret) {
+                kfree(stat);
+                stat = NULL;
+            }
+        }
+    } 
+    xa_unlock(&folio_stat_xa);
+    return stat;
+}
 
 SYSCALL_DEFINE0(migrate_table_reset)
 {
