@@ -21,7 +21,6 @@
 #include <linux/percpu_counter.h>
 
 //[hayong] auto numa profiler
-#include <linux/xarray.h>
 #include <asm/mmu.h>
 
 #ifndef AT_VECTOR_SIZE_ARCH
