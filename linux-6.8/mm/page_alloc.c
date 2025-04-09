@@ -206,13 +206,6 @@ EXPORT_SYMBOL(node_states);
 gfp_t gfp_allowed_mask __read_mostly = GFP_BOOT_MASK;
 
 
-//[hayong] auto numa profiling
-static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
-{
-	unsigned long node_base_pfn = node_start_pfn(nid);  // 해당 노드의 첫 pfn
-	return pfn - node_base_pfn;  // pfn이 해당 노드의 시작 pfn부터 차감된 인덱스
-}
-
 /*
  * A cached value of the page's pageblock's migratetype, used when the page is
  * put on a pcplist. Used to avoid the pageblock migratetype lookup when
@@ -1542,16 +1535,8 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 	page_table_check_alloc(page, order);
 
 	//[hayong] autonuma profiler
-	int nid = page_to_nid(page);
+	init_page_migration_count(page);
 
-	if (numa_profile_stat && numa_profile_stat[nid]) 
-	{
-		int pfn = page_to_pfn(page);
-		int offset = get_pfn_for_node(nid, pfn);
-		init_page_migration_count(page);
-		set_migrate_count(&numa_profile_stat[nid][offset], 0);
-		
-	}
 }
 
 static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
@@ -4668,29 +4653,32 @@ EXPORT_SYMBOL(get_zeroed_page);
  */
 
 
-void __free_pages(struct page *page, unsigned int order)
-{
-	//[hayong] autonuma profiler
-	int nid = page_to_nid(page);
-
-	if (numa_profile_stat && numa_profile_stat[nid]) 
-	{
-		int pfn = page_to_pfn(page);
-		int offset = get_pfn_for_node(nid, pfn);
+ void __free_pages(struct page *page, unsigned int order)
+ {
+	 // [hayong] autonuma profiler
+	 unsigned long pfn = page_to_pfn(page);
+	 void *stat_entry;
+ 
+	 xa_lock(&folio_stat_xa);
+	 stat_entry = xa_erase(&folio_stat_xa, pfn);
+	 xa_unlock(&folio_stat_xa);
+	 
+	 if (stat_entry)
+	 {
 		init_page_migration_count(page);
-		set_migrate_count(&numa_profile_stat[nid][offset], 0);
-		
-	}
-	/* get PageHead before we drop reference */
-	int head = PageHead(page);
-
-	if (put_page_testzero(page))
-		free_the_page(page, order);
-	else if (!head)
-		while (order-- > 0)
-			free_the_page(page + (1 << order), order);
-}
-EXPORT_SYMBOL(__free_pages);
+		kfree(stat_entry);
+	 }
+		 
+	 /* get PageHead before we drop reference */
+	 int head = PageHead(page);
+ 
+	 if (put_page_testzero(page))
+		 free_the_page(page, order);
+	 else if (!head)
+		 while (order-- > 0)
+			 free_the_page(page + (1 << order), order);
+ }
+ EXPORT_SYMBOL(__free_pages);
 
 void free_pages(unsigned long addr, unsigned int order)
 {

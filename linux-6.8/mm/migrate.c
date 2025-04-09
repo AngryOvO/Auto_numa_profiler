@@ -90,8 +90,6 @@
 // [hayong] init struct array
 
 static pid_t target_pid = -1;
-static struct task_struct *numa_log_task;
-static int log_file_index = 0;
 static struct numa_folio_stat *get_or_create_stat(struct folio *newfolio, struct folio *srcfolio);
 
 
@@ -1851,7 +1849,7 @@ move:
 
 					if (target_pid == current_pid) {
 						// 목적지 stat 가져오거나 새로 생성
-						struct numa_folio_stat *dst_stat = get_or_create_stat(dst, folio);
+						get_or_create_stat(dst, folio);
 		
 					// source stat 찾아서 migrate count 초기화
 						unsigned long src_pfn = folio_pfn(folio);
@@ -2748,16 +2746,20 @@ struct dentry *debugfs_root;
 /* seq_file iterator */
 static void *folio_log_start(struct seq_file *m, loff_t *pos)
 {
+	unsigned long index = *pos;
+
     if (*pos == 0)
-    	return xa_find(&folio_stat_xa, pos, ULONG_MAX, XA_PRESENT);
+    	return xa_find(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
 	else
-    	return xa_find_after(&folio_stat_xa, pos, ULONG_MAX, XA_PRESENT);
+    	return xa_find_after(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
 
 }
 
 static void *folio_log_next(struct seq_file *m, void *v, loff_t *pos)
 {
-    return xa_find_after(&folio_stat_xa, pos, ULONG_MAX, XA_PRESENT);
+	unsigned long index = *pos;
+
+    return xa_find_after(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
 }
 
 static void folio_log_stop(struct seq_file *m, void *v)
