@@ -845,7 +845,9 @@ __SYSCALL(__NR_lsm_list_modules, sys_lsm_list_modules)
 #define __NR_migrate_table_reset, 462
 __SYSCALL(__NR_migrate_table_reset, sys_migrate_table_reset)
 #define __NR_set_target_pid, 463
-__SYSCALL(__NR_set_target_pid, sys_set_target_pid)
+__SYSCALL(__NR_start_folio_log, sys_start_folio_log)
+#define __NR_set_target_pid, 464
+__SYSCALL(__NR_stop_folio_log, sys_stop_folio_log)
 
 #undef __NR_syscalls
 #define __NR_syscalls 463

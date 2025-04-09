@@ -56,7 +56,30 @@
 #include <linux/mmzone.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
 #include <linux/mm.h>
+#include <linux/fs.h>
+#include <linux/file.h>
+#include <linux/slab.h>
+#include <linux/sched.h>
+#include <linux/delay.h>
+#include <linux/kthread.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/highmem.h>
+#include <linux/uaccess.h>
+#include <linux/numa.h>
+#include <linux/page-isolation.h>
+#include <linux/page-flags.h>
+#include <linux/xarray.h>
+
+
+
+#define LOG_INTERVAL_MS 500
+#define MAX_LOG_FILES 10
+#define LOG_BUFFER_SIZE (1 << 12)  // 4KB
 
 #include <asm/tlbflush.h>
 
@@ -67,8 +90,8 @@
 // [hayong] init struct array
 
 static pid_t target_pid = -1;
-struct numa_folio_stat **numa_profile_stat;
-static unsigned long get_pfn_for_node(int nid, unsigned long pfn);
+static struct task_struct *numa_log_task;
+static int log_file_index = 0;
 
 
 bool isolate_movable_page(struct page *page, isolate_mode_t mode)
@@ -1793,22 +1816,7 @@ move:
 		dst = list_first_entry(&dst_folios, struct folio, lru);
 		dst2 = list_next_entry(dst, lru);
 		list_for_each_entry_safe(folio, folio2, &unmap_folios, lru) {
-			// [hayong]
-
-			int source_nid = folio_nid(folio);
-			int dest_nid = folio_nid(dst);
-			int pfn = folio_pfn(dst);
-			int pfn2 = folio_pfn(folio);
-			int offset = get_pfn_for_node(dest_nid, pfn);
-			int offset2 = get_pfn_for_node(source_nid, pfn2);
-
-			pid_t current_pid;
-
-			if(current->group_leader)
-				current_pid = current->group_leader->pid;
-			else
-				current_pid = current->pid;
-		
+	
 			is_thp = folio_test_large(folio) && folio_test_pmd_mappable(folio);
 			nr_pages = folio_nr_pages(folio);
 
@@ -1830,13 +1838,31 @@ move:
 				nr_retry_pages += nr_pages;
 				break;
 			case MIGRATEPAGE_SUCCESS:
-			// [hayong]
-				if ((target_pid == current_pid) && numa_profile_stat && numa_profile_stat[dest_nid]) {
-					numa_profile_stat[dest_nid][offset].source_nid = source_nid;
-					int new_folio_migrate_count = folio_migrate_count(dst);
-					set_migrate_count(&numa_profile_stat[dest_nid][offset], new_folio_migrate_count);
-					set_migrate_count(&numa_profile_stat[source_nid][offset2], 0);
+
+				if(target_pid != -1)
+				{
+					pid_t current_pid;
+
+					if(current->group_leader)
+						current_pid = current->group_leader->pid;
+					else
+						current_pid = current->pid;
+
+					if (target_pid == current_pid) {
+						// 목적지 stat 가져오거나 새로 생성
+						struct numa_folio_stat *dst_stat = get_or_create_stat(dst, folio);
+		
+					// source stat 찾아서 migrate count 초기화
+						unsigned long src_pfn = folio_pfn(folio);
+
+						xa_lock(&folio_stat_xa);
+						struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, src_pfn);
+						if (src_stat)
+							kfree(src_stat);
+						xa_unlock(&folio_stat_xa);
+					}
 				}
+				
 				stats->nr_succeeded += nr_pages;
 				stats->nr_thp_succeeded += is_thp;
 				break;
@@ -2663,107 +2689,7 @@ out:
 #endif /* CONFIG_NUMA_BALANCING */
 #endif /* CONFIG_NUMA */
 
-static int __init init_folio_stat(void)
-{
-    int nid;
-    int pages_per_node;
-
-    // vmalloc을 사용하여 연속된 가상 메모리 할당
-    numa_profile_stat = vzalloc(sizeof(struct numa_folio_stat *) * num_online_nodes());
-    if (!numa_profile_stat) {
-        printk(KERN_ERR "NUMA profile stat allocation failed!\n");
-        return -ENOMEM;
-    }
-
-    for_each_online_node(nid) {
-        pages_per_node = node_spanned_pages(nid);
-
-        // NUMA 노드별로 연속된 가상 메모리 할당
-        numa_profile_stat[nid] = vzalloc(sizeof(struct numa_folio_stat) * pages_per_node);
-        if (!numa_profile_stat[nid]) {
-            printk(KERN_ERR "NUMA profile stat allocation for node %d failed!\n", nid);
-            // 실패한 부분까지만 안전하게 해제
-            while (--nid >= 0) {
-                vfree(numa_profile_stat[nid]);
-            }
-            vfree(numa_profile_stat);
-            return -ENOMEM;
-        }
-    }
-
-    printk(KERN_INFO "NUMA profile stat initialization complete.\n");
-    return 0;
-}
-
-// pfn을 각 노드에서 고유한 인덱스로 변환하는 함수
-static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
-{
-    unsigned long node_base_pfn = node_start_pfn(nid);  // 해당 노드의 첫 pfn
-    return pfn - node_base_pfn;  // pfn이 해당 노드의 시작 pfn부터 차감된 인덱스
-}
-
-static int numa_mmap(struct file *file, struct vm_area_struct *vma)
-{
-    unsigned long size = vma->vm_end - vma->vm_start;
-    unsigned long total_size = 0;
-    unsigned long offset = 0;
-    int nid;
-
-    // NUMA 데이터의 총 크기 계산
-    for_each_online_node(nid) {
-        total_size += sizeof(struct numa_folio_stat) * node_spanned_pages(nid);
-    }
-
-    // 요청된 크기가 총 크기를 초과하면 오류 반환
-    if (size > total_size) {
-        printk(KERN_ERR "Requested mmap size exceeds total size\n");
-        return -EINVAL;
-    }
-
-    // NUMA 노드별로 데이터를 매핑
-    for_each_online_node(nid) {
-        unsigned long node_size = sizeof(struct numa_folio_stat) * node_spanned_pages(nid);
-
-        // vmalloc 메모리를 유저 스페이스로 매핑
-        if (remap_vmalloc_range_partial(vma, vma->vm_start + offset, numa_profile_stat[nid], 0, node_size)) {
-			printk(KERN_ERR "remap_vmalloc_range_partial failed for node %d\n", nid);
-			return -EAGAIN;
-		}
-
-        offset += node_size;
-    }
-
-    printk(KERN_INFO "numa_mmap: Successfully mapped NUMA profile data to user space\n");
-    return 0;
-}
-
-static const struct file_operations numa_fops = {
-    .owner = THIS_MODULE,
-    .mmap = numa_mmap,  // mmap 핸들러 연결
-};
-
-static int __init numa_mmap_init(void)
-{
-    int ret;
-
-    // 문자 디바이스 등록
-    ret = register_chrdev(240, "numa_mmap", &numa_fops);
-    if (ret < 0) {
-        printk(KERN_ERR "Failed to register NUMA mmap device\n");
-        return ret;
-    }
-
-    printk(KERN_INFO "NUMA mmap device registered\n");
-    return 0;
-}
-
-static void __exit numa_mmap_exit(void)
-{
-    unregister_chrdev(240, "numa_mmap");
-    printk(KERN_INFO "NUMA mmap device unregistered\n");
-}
-
-module_exit(numa_mmap_exit);
+DEFINE_XARRAY(folio_stat_xa);
 
 static int node_pfn_stats_show(struct seq_file *m, void *v)
 {
@@ -2816,46 +2742,123 @@ static void __exit node_pfn_proc_exit(void)
     remove_proc_entry("node_pfn_stats", NULL);
 }
 
+struct dentry *debugfs_root;
+
+/* seq_file iterator */
+static void *folio_log_start(struct seq_file *m, loff_t *pos)
+{
+    if (*pos == 0)
+    	return xa_find(&folio_stat_xa, pos, ULONG_MAX, XA_PRESENT);
+	else
+    	return xa_find_after(&folio_stat_xa, pos, ULONG_MAX, XA_PRESENT);
+
+}
+
+static void *folio_log_next(struct seq_file *m, void *v, loff_t *pos)
+{
+    return xa_find_after(&folio_stat_xa, pos, ULONG_MAX, XA_PRESENT);
+}
+
+static void folio_log_stop(struct seq_file *m, void *v)
+{
+    xa_unlock(&folio_stat_xa);
+}
+
+static int folio_log_show(struct seq_file *m, void *v)
+{
+    struct numa_folio_stat *stat;
+    if (xa_is_value(v))
+        return 0;
+
+    stat = (struct numa_folio_stat *)v;
+
+    seq_printf(m, "dst_pfn %lu (nid=%d) <- source_pfn %lu (nid=%d): migrate_count=%u\n",
+               stat->dst_pfn, pfn_to_nid(stat->dst_pfn),
+               stat->source_pfn, pfn_to_nid(stat->source_pfn),
+               get_migrate_count(stat));
+    return 0;
+}
 
 
-/* 커널 코드 직접 추가하므로 module_init/module_exit 대신 late_initcall 사용 */
-late_initcall(init_folio_stat);
-late_initcall(node_pfn_proc_init);
-late_initcall(numa_mmap_init);
+static const struct seq_operations folio_log_seq_ops = {
+    .start = folio_log_start,
+    .next  = folio_log_next,
+    .stop  = folio_log_stop,
+    .show  = folio_log_show,
+};
+
+static int folio_log_open(struct inode *inode, struct file *file)
+{
+    return seq_open(file, &folio_log_seq_ops);
+}
+
+static const struct file_operations folio_log_fops = {
+    .owner   = THIS_MODULE,
+    .open    = folio_log_open,
+    .read    = seq_read,
+    .llseek  = seq_lseek,
+    .release = seq_release,
+};
+
+static int __init folio_debugfs_init(void)
+{
+    xa_init_flags(&folio_stat_xa, XA_FLAGS_LOCK_IRQ);
+
+    debugfs_root = debugfs_create_dir("numa_folio", NULL);
+    if (!debugfs_root)
+        return -ENOMEM;
+
+    debugfs_create_file("folio_log", 0444, debugfs_root, NULL, &folio_log_fops);
+    pr_info("debugfs initialized for folio stats\n");
+    return 0;
+}
+
+static void __exit folio_debugfs_exit(void)
+{
+    debugfs_remove_recursive(debugfs_root);
+    pr_info("debugfs for folio stats removed\n");
+}
+
+
 
 SYSCALL_DEFINE0(migrate_table_reset)
 {
-    int nid;
+    unsigned long index = 0;
+    struct numa_folio_stat *stat;
 
-    for_each_online_node(nid) {
-        if (!numa_profile_stat || !numa_profile_stat[nid])
-            continue;
+    xa_lock(&folio_stat_xa);
+    xa_for_each(&folio_stat_xa, index, stat) {
+        struct numa_folio_stat *removed;
 
-        struct numa_folio_stat *stat = numa_profile_stat[nid];
-        unsigned long start_pfn = node_start_pfn(nid);
-        unsigned long end_pfn = node_end_pfn(nid);
-        unsigned long pages_per_node = node_spanned_pages(nid);  // 해당 노드의 총 페이지 수
-
-        for (unsigned long pfn = start_pfn; pfn < end_pfn; pfn++) {
-            unsigned long local_pfn = get_pfn_for_node(nid, pfn);  // 변환된 인덱스
-
-            if (local_pfn >= pages_per_node)  // OOB 체크
-                continue;
-
-            set_migrate_count(&stat[local_pfn], 0);
-        }
+        removed = xa_erase(&folio_stat_xa, index);
+        if (removed)
+            kfree(removed);
     }
+    xa_unlock(&folio_stat_xa);
 
-    printk(KERN_INFO "Migrate table reset complete.\n");
     return 0;
 }
 
-SYSCALL_DEFINE1(set_target_pid, pid_t, pid)
+
+SYSCALL_DEFINE1(start_folio_log, pid_t, pid)
 {
-    if (pid < 0)
+	if (pid < 0)
         return -EINVAL;
 
     target_pid = pid;
-    printk(KERN_INFO "Target PID set to %d\n", target_pid);
+    printk(KERN_INFO "Folio log recording started.\n");
     return 0;
 }
+
+SYSCALL_DEFINE0(stop_folio_log)
+{
+    printk(KERN_INFO "Folio log recording stopped.\n");
+	target_pid = -1;
+    return 0;
+}
+
+/* 커널 코드 직접 추가하므로 module_init/module_exit 대신 late_initcall 사용 */
+late_initcall(node_pfn_proc_init);
+late_initcall(folio_debugfs_init);
+module_exit(folio_debugfs_exit);
+MODULE_LICENSE("GPL");

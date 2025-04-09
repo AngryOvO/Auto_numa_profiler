@@ -20,6 +20,8 @@
 #include <linux/seqlock.h>
 #include <linux/percpu_counter.h>
 
+//[hayong] auto numa profiler
+#include <linux/xarray.h>
 #include <asm/mmu.h>
 
 #ifndef AT_VECTOR_SIZE_ARCH
@@ -990,26 +992,53 @@ struct mm_struct {
 	unsigned long cpu_bitmap[];
 };
 
-// [hayong] auto numa profiling
-struct numa_folio_stat
-{
-	int source_nid;
-	//int folio_task_pid;
-	atomic_t current_migrate_count;
+// [hayong] auto numa profiling with xarray
+struct numa_folio_stat {
+    unsigned long dst_pfn;             // 현재 PFN (xarray 키와 일치)
+    unsigned long source_pfn;                // 마이그레이션 전 노드
+    atomic_t current_migrate_count;
 };
 
-extern struct numa_folio_stat **numa_profile_stat;
+
+extern struct xarray folio_stat_xa;
+
 
 static inline void set_migrate_count(struct numa_folio_stat *stat, int v)
 {
-	atomic_set(&stat->current_migrate_count, v);
+    atomic_set(&stat->current_migrate_count, v);
 }
 
 static inline int get_migrate_count(struct numa_folio_stat *stat)
 {
-	return atomic_read(&stat->current_migrate_count);
+    return atomic_read(&stat->current_migrate_count);
 }
 
+static struct numa_folio_stat *get_or_create_stat(struct folio *newfolio, struct folio *srcfolio)
+{
+    struct numa_folio_stat *stat;
+    unsigned long dst_pfn = folio_pfn(newfolio);
+    unsigned long source_pfn = folio_pfn(srcfolio);
+    int ret;
+
+    xa_lock(&folio_stat_xa);
+    stat = xa_load(&folio_stat_xa, dst_pfn);
+    if (!stat) {
+        stat = kmalloc(sizeof(*stat), GFP_ATOMIC);
+        if (stat) {
+            stat->dst_pfn = dst_pfn;
+            stat->source_pfn = source_pfn;
+            atomic_set(&stat->current_migrate_count, folio_migrate_count(newfolio));
+
+            ret = xa_insert(&folio_stat_xa, dst_pfn, stat, GFP_ATOMIC);
+            if (ret) {
+                kfree(stat);
+                stat = NULL;
+            }
+        }
+    } 
+    xa_unlock(&folio_stat_xa);
+    return stat;
+}
 // [hayong] auto numa profiling
 
 #define MM_MT_FLAGS	(MT_FLAGS_ALLOC_RANGE | MT_FLAGS_LOCK_EXTERN | \

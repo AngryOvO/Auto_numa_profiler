@@ -11,6 +11,10 @@
         "array": "c",
         "string_view": "c",
         "initializer_list": "c",
-        "utility": "c"
+        "utility": "c",
+        "delay.h": "c",
+        "page_owner.h": "c",
+        "ksm.h": "c",
+        "sched.h": "c"
     }
 }
