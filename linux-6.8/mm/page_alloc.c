@@ -4655,29 +4655,19 @@ EXPORT_SYMBOL(get_zeroed_page);
 
  void __free_pages(struct page *page, unsigned int order)
  {
-	 // [hayong] autonuma profiler
-	 unsigned long pfn = page_to_pfn(page);
-	 void *stat_entry;
 
-	 if(folio_stat_xa_initialized)
-	 {
-	 	stat_entry = xa_erase(&folio_stat_xa, pfn);
+	//[hayong]
+	if(folio_stat_xa_initialized)
+		init_page_migration_count(page);
 
-		 if (stat_entry)
-		 {
-			init_page_migration_count(page);
-			kfree(stat_entry);
-		 }
-	 }
-	 
 	 /* get PageHead before we drop reference */
-	 int head = PageHead(page);
+	int head = PageHead(page);
  
-	 if (put_page_testzero(page))
-		 free_the_page(page, order);
-	 else if (!head)
-		 while (order-- > 0)
-			 free_the_page(page + (1 << order), order);
+	if (put_page_testzero(page))
+		free_the_page(page, order);
+	else if (!head)
+		while (order-- > 0)
+			free_the_page(page + (1 << order), order);
  }
  EXPORT_SYMBOL(__free_pages);
 
