@@ -2689,7 +2689,7 @@ out:
 #endif /* CONFIG_NUMA */
 
 DEFINE_XARRAY(folio_stat_xa);
-static bool folio_stat_xa_initialized;
+bool folio_stat_xa_initialized = false;
 
 
 static int node_pfn_stats_show(struct seq_file *m, void *v)
