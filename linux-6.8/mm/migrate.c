@@ -2747,20 +2747,29 @@ struct dentry *debugfs_root;
 /* seq_file iterator */
 static void *folio_log_start(struct seq_file *m, loff_t *pos)
 {
-	unsigned long index = *pos;
+    unsigned long index = *pos;
+    void *entry;
 
+    rcu_read_lock();
     if (*pos == 0)
-    	return xa_find(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
-	else
-    	return xa_find_after(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
+        entry = xa_find(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
+    else
+        entry = xa_find_after(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
+    rcu_read_unlock();
 
+    return entry;
 }
 
 static void *folio_log_next(struct seq_file *m, void *v, loff_t *pos)
 {
-	unsigned long index = *pos;
+    unsigned long index = *pos;
+    void *entry;
 
-    return xa_find_after(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
+    rcu_read_lock();
+    entry = xa_find_after(&folio_stat_xa, &index, ULONG_MAX, XA_PRESENT);
+    rcu_read_unlock();
+
+    return entry;
 }
 
 static void folio_log_stop(struct seq_file *m, void *v)
@@ -2771,7 +2780,7 @@ static void folio_log_stop(struct seq_file *m, void *v)
 static int folio_log_show(struct seq_file *m, void *v)
 {
     struct numa_folio_stat *stat;
-    if (xa_is_value(v))
+    if (!v || xa_is_value(v))
         return 0;
 
     stat = (struct numa_folio_stat *)v;
