@@ -4661,9 +4661,7 @@ EXPORT_SYMBOL(get_zeroed_page);
 
 	 if(folio_stat_xa_initialized)
 	 {
-		xa_lock(&folio_stat_xa);
 	 	stat_entry = xa_erase(&folio_stat_xa, pfn);
-	 	xa_unlock(&folio_stat_xa);
 
 		 if (stat_entry)
 		 {

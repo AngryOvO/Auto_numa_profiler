@@ -89,6 +89,9 @@
 
 // [hayong] init struct array
 
+DEFINE_XARRAY(folio_stat_xa);
+bool folio_stat_xa_initialized = false;
+
 static pid_t target_pid = -1;
 static struct numa_folio_stat *get_or_create_stat(struct folio *newfolio, struct folio *srcfolio);
 
@@ -2687,10 +2690,6 @@ out:
 }
 #endif /* CONFIG_NUMA_BALANCING */
 #endif /* CONFIG_NUMA */
-
-DEFINE_XARRAY(folio_stat_xa);
-bool folio_stat_xa_initialized = false;
-
 
 static int node_pfn_stats_show(struct seq_file *m, void *v)
 {
