@@ -2792,7 +2792,7 @@ static int folio_log_show(struct seq_file *m, void *v)
     int src_nid = pfn_to_nid(local.source_pfn);
 
     seq_printf(m, "dst_pfn %lu (nid=%d) <- source_pfn %lu (nid=%d): migrate_count=%u\n",
-               local.dst_pfn, dst_nid, local.source_pfn, src_nid, local.migrate_count);
+               local.dst_pfn, dst_nid, local.source_pfn, src_nid, local.current_migrate_count);
     return 0;
 }
 
