@@ -2845,7 +2845,7 @@ static int get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, i
         return 0;
     }
 
-    struct numa_folio_stat *stat
+    struct numa_folio_stat *stat;
     int ret;
 
     xa_lock(&folio_stat_xa);
@@ -2877,7 +2877,7 @@ static int get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, i
     	atomic_set(&stat->current_migrate_count, migrate_count);
 	}
 
-	struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, src_pfn);
+	struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
 	if (src_stat)
 		kfree(src_stat);
 
