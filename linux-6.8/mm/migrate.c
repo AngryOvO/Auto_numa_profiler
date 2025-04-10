@@ -2785,8 +2785,6 @@ static int folio_log_show(struct seq_file *m, void *v)
     local.source_pfn = stat->source_pfn;
     local.current_migrate_count = atomic_read(&stat->current_migrate_count);
 
-    rcu_read_unlock();
-
     // 커널 함수가 슬립할 수도 있으므로 복사된 값만 사용
     int dst_nid = pfn_to_nid(local.dst_pfn);
     int src_nid = pfn_to_nid(local.source_pfn);
