@@ -2783,7 +2783,7 @@ static int folio_log_show(struct seq_file *m, void *v)
     // RCU 보호되는 동안 필요한 필드 복사
     local.dst_pfn = stat->dst_pfn;
     local.source_pfn = stat->source_pfn;
-    local.migrate_count = atomic_read(&stat->current_migrate_count);
+    local.current_migrate_count = atomic_read(&stat->current_migrate_count);
 
     rcu_read_unlock();
 
