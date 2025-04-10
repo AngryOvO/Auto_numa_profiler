@@ -2774,25 +2774,32 @@ static void folio_log_stop(struct seq_file *m, void *v)
 
 static int folio_log_show(struct seq_file *m, void *v)
 {
-    struct numa_folio_stat local;
-    struct numa_folio_stat *stat = v;
-
     if (!v || xa_is_value(v))
         return 0;
 
-    // RCU 보호되는 동안 필요한 필드 복사
+    struct {
+        unsigned long dst_pfn;
+        unsigned long source_pfn;
+        unsigned int current_migrate_count;
+    } local;
+
+    struct numa_folio_stat *stat = v;
+
+    // RCU 보호 하에서 복사
     local.dst_pfn = stat->dst_pfn;
     local.source_pfn = stat->source_pfn;
     local.current_migrate_count = atomic_read(&stat->current_migrate_count);
 
-    // 커널 함수가 슬립할 수도 있으므로 복사된 값만 사용
+    // 슬립 가능하므로 복사된 값만 사용
     int dst_nid = pfn_to_nid(local.dst_pfn);
     int src_nid = pfn_to_nid(local.source_pfn);
 
     seq_printf(m, "dst_pfn %lu (nid=%d) <- source_pfn %lu (nid=%d): migrate_count=%u\n",
                local.dst_pfn, dst_nid, local.source_pfn, src_nid, local.current_migrate_count);
+
     return 0;
 }
+
 
 
 
