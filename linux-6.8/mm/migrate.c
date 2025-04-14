@@ -2835,46 +2835,47 @@ static void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, 
     struct numa_folio_stat *stat;
     int ret;
 
+    // 락을 한번만 잡고, 그 사이에서 여러 작업을 처리
     xa_lock(&folio_stat_xa);
+
+    // dst_pfn에 해당하는 stat을 찾기
     stat = xa_load(&folio_stat_xa, dst_pfn);
     if (!stat) {
+        // 메모리 할당
         stat = kmalloc(sizeof(*stat), GFP_KERNEL);
         if (!stat) {
-            xa_unlock(&folio_stat_xa);
+            xa_unlock(&folio_stat_xa);  // 메모리 할당 실패 시 바로 락을 해제
             return;
         }
 
+        // 할당 후 초기화
         stat->dst_pfn = dst_pfn;
         stat->source_pfn = source_pfn;
         atomic_set(&stat->current_migrate_count, migrate_count);
 
+        // xa에 새 stat 삽입
         ret = xa_insert(&folio_stat_xa, dst_pfn, stat, GFP_KERNEL);
         if (ret) {
-            kfree(stat);
-            stat = NULL;
-			xa_unlock(&folio_stat_xa);
-			return;
+            kfree(stat);  // 삽입 실패 시 할당한 메모리 해제
+            xa_unlock(&folio_stat_xa);  // 락 해제 후 반환
+            return;
         }
+    } else {
+        // stat이 이미 존재하면 값을 갱신
+        stat->dst_pfn = dst_pfn;
+        stat->source_pfn = source_pfn;
+        atomic_set(&stat->current_migrate_count, migrate_count);
     }
-	else
-	{
-		stat->dst_pfn = dst_pfn;
-    	stat->source_pfn = source_pfn;
-    	atomic_set(&stat->current_migrate_count, migrate_count);
-	}
 
-	xa_unlock(&folio_stat_xa);
+    // 이전 source_pfn에 해당하는 stat을 삭제
+    struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
+    if (src_stat) {
+        kfree(src_stat);  // 삭제한 stat 메모리 해제
+    }
 
-	cond_resched();
+    xa_unlock(&folio_stat_xa);  // 락 해제
 
-	xa_lock(&folio_stat_xa);
-	
-	struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
-	if (src_stat)
-		kfree(src_stat);
-
-    xa_unlock(&folio_stat_xa);
-    return;
+    cond_resched();  // 락을 해제한 후 CPU 양보
 }
 
 
