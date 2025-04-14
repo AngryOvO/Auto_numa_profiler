@@ -93,7 +93,7 @@ DEFINE_XARRAY(folio_stat_xa);
 bool folio_stat_xa_initialized = false;
 
 static pid_t target_pid = -1;
-static int get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int migrate_count);
+static void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int migrate_count);
 
 
 bool isolate_movable_page(struct page *page, isolate_mode_t mode)
@@ -1857,12 +1857,7 @@ move:
 						// 목적지 stat 가져오거나 새로 생성
 						int migrate_count = folio_migrate_count(folio);
 						
-						int xarray_stat = get_or_create_stat(dst_pfn, source_pfn, migrate_count);
-
-						if(xarray_stat)
-							printk(KERN_INFO "success update xarray stat\n");
-						else
-							printk(KERN_INFO "failed update xarray stat\n");
+						get_or_create_stat(dst_pfn, source_pfn, migrate_count);
 					}
 				}
 				
@@ -2777,31 +2772,21 @@ static int folio_log_show(struct seq_file *m, void *v)
     if (!v || xa_is_value(v))
         return 0;
 
-    struct {
-        unsigned long dst_pfn;
-        unsigned long source_pfn;
-        unsigned int current_migrate_count;
-    } local;
-
     struct numa_folio_stat *stat = v;
+    // RCU read 보호 하에서 필요한 값만 복사
+    unsigned long local_dst_pfn = stat->dst_pfn;
+    unsigned long local_source_pfn = stat->source_pfn;
+    unsigned int local_migrate_count = atomic_read(&stat->current_migrate_count);
 
-    // RCU 보호 하에서 복사
-    local.dst_pfn = stat->dst_pfn;
-    local.source_pfn = stat->source_pfn;
-    local.current_migrate_count = atomic_read(&stat->current_migrate_count);
+    int dst_nid = pfn_to_nid(local_dst_pfn);
+    int src_nid = pfn_to_nid(local_source_pfn);
 
-    // 슬립 가능하므로 복사된 값만 사용
-    int dst_nid = pfn_to_nid(local.dst_pfn);
-    int src_nid = pfn_to_nid(local.source_pfn);
-
+    // RCU read 락이 해제된 후 seq_printf 호출 (만약 복사 후 unlock 가능하다면)
     seq_printf(m, "dst_pfn %lu (nid=%d) <- source_pfn %lu (nid=%d): migrate_count=%u\n",
-               local.dst_pfn, dst_nid, local.source_pfn, src_nid, local.current_migrate_count);
+               local_dst_pfn, dst_nid, local_source_pfn, src_nid, local_migrate_count);
 
     return 0;
 }
-
-
-
 
 static const struct seq_operations folio_log_seq_ops = {
     .start = folio_log_start,
@@ -2833,21 +2818,18 @@ static int __init folio_debugfs_init(void)
         return -ENOMEM;
 
     debugfs_create_file("folio_log", 0444, debugfs_root, NULL, &folio_log_fops);
-    pr_info("debugfs initialized for folio stats\n");
     return 0;
 }
 
 static void __exit folio_debugfs_exit(void)
 {
     debugfs_remove_recursive(debugfs_root);
-    pr_info("debugfs for folio stats removed\n");
 }
 
-static int get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int migrate_count)
+static void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int migrate_count)
 {
     if (!dst_pfn || !source_pfn) {
-        pr_err("error");
-        return 0;
+        return;
     }
 
     struct numa_folio_stat *stat;
@@ -2856,23 +2838,22 @@ static int get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, i
     xa_lock(&folio_stat_xa);
     stat = xa_load(&folio_stat_xa, dst_pfn);
     if (!stat) {
-        stat = kmalloc(sizeof(*stat), GFP_ATOMIC);
+        stat = kmalloc(sizeof(*stat), GFP_KERNEL);
         if (!stat) {
-            pr_err("Failed to allocate numa_folio_stat for pfn %lu\n", dst_pfn);
             xa_unlock(&folio_stat_xa);
-            return 0;
+            return;
         }
 
         stat->dst_pfn = dst_pfn;
         stat->source_pfn = source_pfn;
         atomic_set(&stat->current_migrate_count, migrate_count);
 
-        ret = xa_insert(&folio_stat_xa, dst_pfn, stat, GFP_ATOMIC);
+        ret = xa_insert(&folio_stat_xa, dst_pfn, stat, GFP_KERNEL);
         if (ret) {
-            pr_err("xa_insert failed for pfn %lu (ret=%d)\n", dst_pfn, ret);
             kfree(stat);
             stat = NULL;
-			return 0;
+			xa_unlock(&folio_stat_xa);
+			return;
         }
     }
 	else
@@ -2882,12 +2863,18 @@ static int get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, i
     	atomic_set(&stat->current_migrate_count, migrate_count);
 	}
 
+	xa_unlock(&folio_stat_xa);
+
+	cond_resched();
+
+	xa_lock(&folio_stat_xa);
+	
 	struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
 	if (src_stat)
 		kfree(src_stat);
 
     xa_unlock(&folio_stat_xa);
-    return 1;
+    return;
 }
 
 
