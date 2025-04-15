@@ -1848,10 +1848,8 @@ move:
 				{
 					pid_t current_pid;
 
-					rcu_read_lock();
 					struct task_struct *leader = rcu_dereference(current->group_leader);
 					current_pid = leader ? leader->pid : current->pid;
-					rcu_read_unlock();
 
 					if (target_pid == current_pid) {
 						// 목적지 stat 가져오거나 새로 생성
@@ -2837,6 +2835,7 @@ static void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, 
 
     // 락을 한번만 잡고, 그 사이에서 여러 작업을 처리
     xa_lock(&folio_stat_xa);
+	// 락푸는거 생각해보기
 
     // dst_pfn에 해당하는 stat을 찾기
     stat = xa_load(&folio_stat_xa, dst_pfn);
@@ -2867,13 +2866,13 @@ static void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, 
         atomic_set(&stat->current_migrate_count, migrate_count);
     }
 
+    xa_unlock(&folio_stat_xa);  // 락 해제
+
     // 이전 source_pfn에 해당하는 stat을 삭제
     struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
     if (src_stat) {
         kfree(src_stat);  // 삭제한 stat 메모리 해제
     }
-
-    xa_unlock(&folio_stat_xa);  // 락 해제
 
     cond_resched();  // 락을 해제한 후 CPU 양보
 }
