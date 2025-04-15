@@ -2824,58 +2824,68 @@ static void __exit folio_debugfs_exit(void)
     debugfs_remove_recursive(debugfs_root);
 }
 
-static void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int migrate_count)
+void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int migrate_count)
 {
-    if (!dst_pfn || !source_pfn) {
-        return;
-    }
-
     struct numa_folio_stat *stat;
     int ret;
 
-    // 락을 한번만 잡고, 그 사이에서 여러 작업을 처리
-    xa_lock(&folio_stat_xa);
-	// 락푸는거 생각해보기
+    if (!dst_pfn || !source_pfn)
+        return;
 
-    // dst_pfn에 해당하는 stat을 찾기
+    /* 먼저, 이미 stat이 존재하는지 빠르게 확인 */
     stat = xa_load(&folio_stat_xa, dst_pfn);
     if (!stat) {
-        // 메모리 할당
-        stat = kmalloc(sizeof(*stat), GFP_KERNEL);
+        /* spinlock 영역 밖에서 메모리 할당 */
+        struct numa_folio_stat *new_stat = kmalloc(sizeof(*new_stat), GFP_KERNEL);
+        if (!new_stat)
+            return;
+
+        /* new_stat 초기화 */
+        new_stat->dst_pfn = dst_pfn;
+        new_stat->source_pfn = source_pfn;
+        atomic_set(&new_stat->current_migrate_count, migrate_count);
+
+        /* 이제 spinlock을 획득하여 재확인 및 삽입 */
+        xa_lock(&folio_stat_xa);
+        stat = xa_load(&folio_stat_xa, dst_pfn);
         if (!stat) {
-            xa_unlock(&folio_stat_xa);  // 메모리 할당 실패 시 바로 락을 해제
-            return;
+            ret = xa_insert(&folio_stat_xa, dst_pfn, new_stat, GFP_ATOMIC);
+            if (ret) {
+                kfree(new_stat);
+            } else {
+                stat = new_stat;
+            }
+        } else {
+            /* 이미 stat이 존재하므로 new_stat은 폐기 */
+            kfree(new_stat);
+            /* 값 갱신 */
+            stat->dst_pfn = dst_pfn;
+            stat->source_pfn = source_pfn;
+            atomic_set(&stat->current_migrate_count, migrate_count);
         }
-
-        // 할당 후 초기화
-        stat->dst_pfn = dst_pfn;
-        stat->source_pfn = source_pfn;
-        atomic_set(&stat->current_migrate_count, migrate_count);
-
-        // xa에 새 stat 삽입
-        ret = xa_insert(&folio_stat_xa, dst_pfn, stat, GFP_KERNEL);
-        if (ret) {
-            kfree(stat);  // 삽입 실패 시 할당한 메모리 해제
-            xa_unlock(&folio_stat_xa);  // 락 해제 후 반환
-            return;
+        /* source_pfn 관련된 stat 삭제 */
+        {
+            struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
+            if (src_stat)
+                kfree(src_stat);
         }
+        xa_unlock(&folio_stat_xa);
     } else {
-        // stat이 이미 존재하면 값을 갱신
+        /* stat이 이미 있는 경우 */
+        xa_lock(&folio_stat_xa);
         stat->dst_pfn = dst_pfn;
         stat->source_pfn = source_pfn;
         atomic_set(&stat->current_migrate_count, migrate_count);
+        {
+            struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
+            if (src_stat)
+                kfree(src_stat);
+        }
+        xa_unlock(&folio_stat_xa);
     }
-
-    xa_unlock(&folio_stat_xa);  // 락 해제
-
-    // 이전 source_pfn에 해당하는 stat을 삭제
-    struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
-    if (src_stat) {
-        kfree(src_stat);  // 삭제한 stat 메모리 해제
-    }
-
-    cond_resched();  // 락을 해제한 후 CPU 양보
+    cond_resched();
 }
+
 
 
 SYSCALL_DEFINE0(migrate_table_reset)
