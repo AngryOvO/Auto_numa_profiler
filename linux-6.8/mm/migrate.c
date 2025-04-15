@@ -2832,10 +2832,10 @@ void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int mig
     if (!dst_pfn || !source_pfn)
         return;
 
-    /* 먼저, 이미 stat이 존재하는지 빠르게 확인 */
+    /* 먼저, spinlock 영역 밖에서 미리 기존 엔트리를 확인 */
     stat = xa_load(&folio_stat_xa, dst_pfn);
     if (!stat) {
-        /* spinlock 영역 밖에서 메모리 할당 */
+        /* spinlock 밖에서 비용이 큰 메모리 할당 */
         struct numa_folio_stat *new_stat = kmalloc(sizeof(*new_stat), GFP_KERNEL);
         if (!new_stat)
             return;
@@ -2845,25 +2845,27 @@ void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int mig
         new_stat->source_pfn = source_pfn;
         atomic_set(&new_stat->current_migrate_count, migrate_count);
 
-        /* 이제 spinlock을 획득하여 재확인 및 삽입 */
+        /* 이제, spinlock을 획득하여 실제 삽입 및 갱신 작업 수행 */
         xa_lock(&folio_stat_xa);
+
+        /* 락 획득 후, 재확인 (double-checked locking) */
         stat = xa_load(&folio_stat_xa, dst_pfn);
         if (!stat) {
             ret = xa_insert(&folio_stat_xa, dst_pfn, new_stat, GFP_ATOMIC);
-            if (ret) {
+            if (ret) {  /* 삽입 실패 시 할당한 메모리 해제 */
                 kfree(new_stat);
             } else {
                 stat = new_stat;
             }
         } else {
-            /* 이미 stat이 존재하므로 new_stat은 폐기 */
-            kfree(new_stat);
-            /* 값 갱신 */
+            /* 이미 stat 엔트리가 존재하면, 새로 할당한 new_stat은 버리고 기존 엔트리 업데이트 */
             stat->dst_pfn = dst_pfn;
             stat->source_pfn = source_pfn;
             atomic_set(&stat->current_migrate_count, migrate_count);
+            kfree(new_stat);
         }
-        /* source_pfn 관련된 stat 삭제 */
+
+        /* 기존의 source_pfn에 해당하는 이전 엔트리를 삭제 */
         {
             struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
             if (src_stat)
@@ -2871,11 +2873,14 @@ void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int mig
         }
         xa_unlock(&folio_stat_xa);
     } else {
-        /* stat이 이미 있는 경우 */
+        /* 외부에서 미리 엔트리가 있음이 확인되었으면, 락 내에서 업데이트만 진행 */
         xa_lock(&folio_stat_xa);
+
         stat->dst_pfn = dst_pfn;
         stat->source_pfn = source_pfn;
         atomic_set(&stat->current_migrate_count, migrate_count);
+
+        /* 이전 source_pfn key에 해당하는 엔트리 삭제 */
         {
             struct numa_folio_stat *src_stat = xa_erase(&folio_stat_xa, source_pfn);
             if (src_stat)
@@ -2883,8 +2888,11 @@ void get_or_create_stat(unsigned long dst_pfn, unsigned long source_pfn, int mig
         }
         xa_unlock(&folio_stat_xa);
     }
+
+    /* 긴 루프 내에서 CPU를 어느 정도 양보해서 스케줄러가 preempt할 기회를 줌 */
     cond_resched();
 }
+
 
 
 
