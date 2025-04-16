@@ -1803,7 +1803,9 @@ move:
 			int source_nid = folio_nid(folio);
 			int dest_nid = folio_nid(dst);
 			int pfn = folio_pfn(dst);
+			int pfn2 = folio_pfn(folio);
 			int offset = get_pfn_for_node(dest_nid, pfn);
+			int offset2 = get_pfn_for_node(source_nid, pfn2);
 		
 			is_thp = folio_test_large(folio) && folio_test_pmd_mappable(folio);
 			nr_pages = folio_nr_pages(folio);
@@ -1839,6 +1841,7 @@ move:
 							numa_profile_stat[dest_nid][offset].source_nid = source_nid;
 							int new_folio_migrate_count = folio_migrate_count(dst);
 							set_migrate_count(&numa_profile_stat[dest_nid][offset], new_folio_migrate_count);
+							set_migrate_count(&numa_profile_stat[source_nid][offset2], 0);
 						}
 					}
 				}
