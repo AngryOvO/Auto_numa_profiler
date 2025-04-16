@@ -994,7 +994,6 @@ struct mm_struct {
 struct numa_folio_stat
 {
 	int source_nid;
-	//int folio_task_pid;
 	atomic_t current_migrate_count;
 };
 

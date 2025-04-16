@@ -7,6 +7,8 @@
         "notifier.h": "c",
         "kernel.h": "c",
         "init.h": "c",
-        "types.h": "c"
+        "types.h": "c",
+        "mmzone.h": "c",
+        "debugfs.h": "c"
     }
 }

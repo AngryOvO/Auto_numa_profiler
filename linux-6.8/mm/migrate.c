@@ -57,6 +57,13 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/mm.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/debugfs.h>
+#include <linux/atomic.h>
+#include <linux/slab.h>
+#include <linux/fs.h>
 
 #include <asm/tlbflush.h>
 
@@ -68,7 +75,7 @@
 
 struct numa_folio_stat **numa_profile_stat;
 static unsigned long get_pfn_for_node(int nid, unsigned long pfn);
-
+static pid_t target_pid = -1;
 
 bool isolate_movable_page(struct page *page, isolate_mode_t mode)
 {
@@ -1820,11 +1827,23 @@ move:
 				break;
 			case MIGRATEPAGE_SUCCESS:
 			// [hayong]
-				if (numa_profile_stat && numa_profile_stat[dest_nid]) {
-					numa_profile_stat[dest_nid][offset].source_nid = source_nid;
-					int new_folio_migrate_count = folio_migrate_count(dst);
-					set_migrate_count(&numa_profile_stat[dest_nid][offset], new_folio_migrate_count);
+
+				if(target_pid != -1)
+				{
+					pid_t current_pid;
+
+					struct task_struct *leader = rcu_dereference(current->group_leader);
+					current_pid = leader ? leader->pid : current->pid;
+
+					if (target_pid == current_pid) {
+						if (numa_profile_stat && numa_profile_stat[dest_nid]) {
+							numa_profile_stat[dest_nid][offset].source_nid = source_nid;
+							int new_folio_migrate_count = folio_migrate_count(dst);
+							set_migrate_count(&numa_profile_stat[dest_nid][offset], new_folio_migrate_count);
+						}
+					}
 				}
+				
 				stats->nr_succeeded += nr_pages;
 				stats->nr_thp_succeeded += is_thp;
 				break;
@@ -2651,6 +2670,10 @@ out:
 #endif /* CONFIG_NUMA_BALANCING */
 #endif /* CONFIG_NUMA */
 
+static struct dentry *debugfs_root;
+static struct dentry *folio_stats_file;
+static struct dentry *pfn_stats_file;
+
 static int __init init_folio_stat(void)
 {
     int nid;
@@ -2694,29 +2717,26 @@ static int numa_folio_stats_show(struct seq_file *m, void *v)
 {
     int nid;
 
-    // 각 노드를 순회
     for_each_online_node(nid) {
-        if (!numa_profile_stat || !numa_profile_stat[nid])  // NULL 체크
+        if (!numa_profile_stat || !numa_profile_stat[nid])
             continue;
 
-        struct numa_folio_stat *stat = numa_profile_stat[nid];  // 노드별 stat 포인터 가져오기
+        struct numa_folio_stat *stat = numa_profile_stat[nid];
         unsigned long start_pfn = node_start_pfn(nid); 
         unsigned long end_pfn = node_end_pfn(nid);   
 
         for (unsigned long pfn = start_pfn; pfn < end_pfn; pfn++) {
-            // pfn에 해당하는 stat가 있을 때만 출력
             unsigned long node_pfn = get_pfn_for_node(nid, pfn);
             if (atomic_read(&stat[node_pfn].current_migrate_count) > 0) {
-                seq_printf(m, "folio node : %d, pfn: %lu, source_nid: %d, migrate_count: %d\n", nid, 
-                            pfn, stat[node_pfn].source_nid, atomic_read(&stat[node_pfn].current_migrate_count));
+                seq_printf(m, "folio node : %d, pfn: %lu, source_nid: %d, migrate_count: %d\n",
+                           nid, pfn, stat[node_pfn].source_nid,
+                           atomic_read(&stat[node_pfn].current_migrate_count));
             }
         }
     }
 
     return 0;
 }
-
-
 
 static int numa_folio_stats_open(struct inode *inode, struct file *file)
 {
@@ -2730,29 +2750,14 @@ static const struct proc_ops numa_folio_stats_fops = {
     .proc_release = single_release,
 };
 
-/* 커널 초기화 시 /proc/numa_folio_stats 생성 */
-static int __init numa_folio_proc_init(void)
-{
-    proc_create("numa_folio_stats", 0444, NULL, &numa_folio_stats_fops);
-    return 0;
-}
-
-/* 커널 종료 시 /proc/numa_folio_stats 제거 */
-static void __exit numa_folio_proc_exit(void)
-{
-    remove_proc_entry("numa_folio_stats", NULL);
-}
-
 static int node_pfn_stats_show(struct seq_file *m, void *v)
 {
     int nid;
 
-    // 각 노드를 순회
     for_each_online_node(nid) {
         unsigned long start_pfn = node_start_pfn(nid); 
         unsigned long end_pfn = node_end_pfn(nid);   
 
-        // 각 노드에 대해 PFN 범위 출력
         seq_printf(m, "node %d\n", nid);
         seq_printf(m, "start pfn %lu, end pfn %lu\n", start_pfn, end_pfn);
     }
@@ -2772,30 +2777,44 @@ static const struct proc_ops node_pfn_stats_fops = {
     .proc_release = single_release,
 };
 
-/* 커널 초기화 후 /proc/node_pfn_stats 생성 */
 static int __init node_pfn_proc_init(void)
 {
     proc_create("node_pfn_stats", 0444, NULL, &node_pfn_stats_fops);
     return 0;
 }
 
-/* 커널 종료 시 /proc/node_pfn_stats 제거 */
 static void __exit node_pfn_proc_exit(void)
 {
     remove_proc_entry("node_pfn_stats", NULL);
 }
 
+static int __init numa_folio_debugfs_init(void)
+{
+    debugfs_root = debugfs_create_dir("numa_folio", NULL);
+    if (!debugfs_root)
+        return -ENOMEM;
 
+    folio_stats_file = debugfs_create_file("folio_stats", 0444, debugfs_root, NULL, &numa_folio_stats_fops);
+    pfn_stats_file   = debugfs_create_file("pfn_stats", 0444, debugfs_root, NULL, &node_pfn_stats_fops);
 
-/* 커널 코드 직접 추가하므로 module_init/module_exit 대신 late_initcall 사용 */
+    return 0;
+}
+
+static void __exit numa_folio_debugfs_exit(void)
+{
+    debugfs_remove_recursive(debugfs_root);
+}
+
+/* 커널 내부 코드이므로 module_init/module_exit 대신 late_initcall 사용 */
 late_initcall(init_folio_stat);
-late_initcall(numa_folio_proc_init);
 late_initcall(node_pfn_proc_init);
+late_initcall(numa_folio_debugfs_init);
 
 SYSCALL_DEFINE0(migrate_table_reset)
 {
     int nid;
 
+	target_pid = -1;
     for_each_online_node(nid) {
         if (!numa_profile_stat || !numa_profile_stat[nid])
             continue;
@@ -2816,5 +2835,15 @@ SYSCALL_DEFINE0(migrate_table_reset)
     }
 
     printk(KERN_INFO "Migrate table reset complete.\n");
+    return 0;
+}
+
+SYSCALL_DEFINE1(start_folio_log, pid_t, pid)
+{
+	if (pid < 0)
+        return -EINVAL;
+
+    target_pid = pid;
+    printk(KERN_INFO "Folio log recording started.\n");
     return 0;
 }
