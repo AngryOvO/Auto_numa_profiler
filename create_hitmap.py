@@ -4,6 +4,7 @@ import re
 import sys
 import glob
 import os
+import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,7 +14,7 @@ from matplotlib.colors import LinearSegmentedColormap
 def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
     """
     /sys/kernel/debug/numa_folio/pfn_stats 파일을 파싱하여 각 NUMA 노드의 PFN 범위를 반환한다.
-    출력 예: {0: (start_pfn, end_pfn), 1: (start_pfn, end_pfn), ...}
+    예: {0: (start_pfn, end_pfn), 1: (start_pfn, end_pfn), ...}
     """
     node_ranges = {}
     try:
@@ -44,12 +45,14 @@ def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
 def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
                                          node_pfn_stats_path="/sys/kernel/debug/numa_folio/pfn_stats"):
     """
-    log_pattern에 맞는 모든 로그 파일을 결합하여 DataFrame을 생성하고,
-    각 NUMA 노드별 히트맵을 생성하여 PNG 파일로 저장한다.
+    로그 파일을 결합하여 DataFrame을 생성하고,
+    각 NUMA 노드별로 전체 PFN 범위를 반영한 pivot 테이블을 만든 후,
+    제일 마지막 스냅샷의 migrate_count 최댓값(정수)을 기준으로 색상 범위를 설정하여
+    단일 스레드로 정확한 히트맵을 생성하고 PNG 파일로 저장한다.
     
-    히트맵을 생성하기 전에, 각 노드의 PFN 범위와 수집한 총 스냅샷 갯수를 출력한다.
+    또한, 전체 데이터를 CSV 파일로 저장한다.
     """
-    # glob를 사용해 로그 파일 목록을 가져옴
+    # 파일명에 포함된 스냅샷 번호 순으로 로그 파일 정렬
     log_files = sorted(glob.glob(log_pattern),
                        key=lambda x: int(re.search(r"folio_stats_snapshot_(\d+)\.log", x).group(1)))
     if not log_files:
@@ -62,14 +65,12 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
     
     # 각 로그 파일의 데이터를 추출
     for log_file in log_files:
-        # 파일 이름에서 스냅샷 번호를 추출
         m_snapshot = re.search(r"folio_stats_snapshot_(\d+)\.log", log_file)
         if not m_snapshot:
             continue
         snapshot = int(m_snapshot.group(1))
         with open(log_file, "r") as f:
-            lines = f.readlines()
-            for line in lines:
+            for line in f:
                 m = line_regex.search(line)
                 if m:
                     node = int(m.group(1))
@@ -82,25 +83,27 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
         print("No data extracted from log files.")
         sys.exit(1)
 
-    # DataFrame 생성
+    # DataFrame 생성 및 CSV 저장
     df = pd.DataFrame(collected_data, columns=["node", "pfn", "source_nid", "migrate_count", "snapshot"])
     
-    # 노드별 PFN 범위 확보
+    # 노드별 PFN 범위
     node_ranges = parse_node_pfn_stats(node_pfn_stats_path)
     print("Node PFN ranges:")
     print(node_ranges)
     
-    # 스냅샷 범위 설정 (최소 ~ 최대 스냅샷)
+    # 총 스냅샷 갯수 출력
     if df.empty:
         all_snapshots = range(0, 2)
     else:
         all_snapshots = range(df["snapshot"].min(), df["snapshot"].max() + 1)
     print("Total number of snapshots collected:", len(all_snapshots))
     
-    # 전체 migrate_count의 최대값 (히트맵 색상 범위에 사용)
-    global_vmax = df["migrate_count"].max() if not df.empty else 1
-
-    # 노드별 히트맵 생성 (x축: 스냅샷, y축: pfn)
+    # 제일 마지막 스냅샷의 migrate_count 값 중 최댓값을 global_vmax로 사용 (정수 단위)
+    last_snapshot = df["snapshot"].max()
+    global_vmax = int(df[df["snapshot"] == last_snapshot]["migrate_count"].max())
+    
+    # 각 노드별 히트맵 생성 (x축: 스냅샷, y축: PFN)
+    # 단일 스레드로 진행하므로 for-loop로 처리
     for node in node_ranges.keys():
         node_df = df[df["node"] == node]
         if not node_df.empty:
@@ -111,39 +114,33 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
                 aggfunc="sum",
                 fill_value=0
             )
-            # 해당 노드의 전체 PFN 범위를 포함하도록 인덱스를 재설정
+            # 해당 노드의 전체 PFN 범위 적용
             start_pfn, end_pfn = node_ranges[node]
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pivot.reindex(index=full_pfn_range, fill_value=0)
+            # migrate_count를 정수형으로 캐스팅
+            pivot = pivot.astype(int)
         else:
             print(f"No migration data for node {node}. Generating empty heatmap.")
             start_pfn, end_pfn = node_ranges[node]
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pd.DataFrame(0, index=full_pfn_range, columns=all_snapshots)
 
-        # (선택사항) 디버그: pivot 테이블의 크기 출력
         print(f"Node {node} pivot shape: {pivot.shape}")
 
-        # 히트맵 생성 (열: 스냅샷, 행: PFN)
+        # 정확한 히트맵 생성 (단일 스레드)
         cmap = LinearSegmentedColormap.from_list("Thermal", ["navy", "red", "yellow"], N=256)
         plt.figure(figsize=(10, 8))
-        sns.heatmap(
-            pivot,
-            cmap=cmap,
-            cbar=True,
-            vmin=0,
-            vmax=global_vmax,
-            annot=True,
-            fmt="d"
-        )
+        # annot=True로 각 셀에 정수값을 표기 (정확한 migrate_count 값 확인)
+        sns.heatmap(pivot, cmap=cmap, cbar=True, vmin=0, vmax=global_vmax, annot=True, fmt="d")
         plt.title(f"Node {node} - Migration Heatmap")
         plt.xlabel("Snapshot (Time)")
         plt.ylabel("PFN")
         plt.tight_layout()
-        out_filename = f"node_{node}_migration_heatmap.png"
-        plt.savefig(out_filename)
-        print(f"Heatmap for node {node} saved as '{out_filename}'.")
+        final_filename = f"node_{node}_migration_heatmap.png"
+        plt.savefig(final_filename, dpi=300)
         plt.close()
+        print(f"Final heatmap for node {node} saved as '{final_filename}'.")
 
     return df
 
@@ -158,7 +155,7 @@ def main():
     args = parser.parse_args()
 
     df = combine_logs_and_generate_heatmaps(args.log_pattern, args.node_pfn_stats)
-    # 결합된 데이터를 CSV 파일로 저장 (선택사항)
+    # 결합된 데이터를 CSV 파일로 저장 (옵션)
     df.to_csv("combined_folio_stats.csv", index=False)
     print("Combined data saved as 'combined_folio_stats.csv'.")
 
