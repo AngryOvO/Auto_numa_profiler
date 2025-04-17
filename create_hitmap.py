@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
 
-def parse_node_pfn_stats(filepath='/proc/node_pfn_stats'):
+def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
     """
-    /proc/node_pfn_stats 파일을 파싱하여 각 NUMA 노드의 PFN 범위를 반환한다.
+    /sys/kernel/debug/numa_folio/pfn_stats 파일을 파싱하여 각 NUMA 노드의 PFN 범위를 반환한다.
     출력 예: {0: (start_pfn, end_pfn), 1: (start_pfn, end_pfn), ...}
     """
     node_ranges = {}
@@ -42,7 +42,7 @@ def parse_node_pfn_stats(filepath='/proc/node_pfn_stats'):
     return node_ranges
 
 def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
-                                         node_pfn_stats_path="/proc/node_pfn_stats"):
+                                         node_pfn_stats_path="/sys/kernel/debug/numa_folio/pfn_stats"):
     """
     log_pattern에 맞는 모든 로그 파일을 결합하여 DataFrame을 생성하고,
     각 NUMA 노드별 히트맵을 생성하여 PNG 파일로 저장한다.
@@ -85,7 +85,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
     print("Collected data sample:")
     print(df.head())
 
-    # /proc/node_pfn_stats 파일을 파싱하여 노드별 PFN 범위 확보
+    # /sys/kernel/debug/numa_folio/pfn_stats 파일을 파싱하여 노드별 PFN 범위 확보
     node_ranges = parse_node_pfn_stats(node_pfn_stats_path)
     print("Node PFN ranges:")
     print(node_ranges)
@@ -150,8 +150,8 @@ def main():
     )
     parser.add_argument("--log_pattern", type=str, default="folio_stats_snapshot_*.log",
                         help="Glob pattern for identifying log files (default: folio_stats_snapshot_*.log)")
-    parser.add_argument("--node_pfn_stats", type=str, default="/proc/node_pfn_stats",
-                        help="Path to the node_pfn_stats file (default: /proc/node_pfn_stats)")
+    parser.add_argument("--node_pfn_stats", type=str, default="/sys/kernel/debug/numa_folio/pfn_stats",
+                        help="Path to the node_pfn_stats file (default: /sys/kernel/debug/numa_folio/pfn_stats)")
     args = parser.parse_args()
 
     df = combine_logs_and_generate_heatmaps(args.log_pattern, args.node_pfn_stats)
