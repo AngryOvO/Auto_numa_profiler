@@ -698,7 +698,6 @@ int migrate_folio_extra(struct address_space *mapping, struct folio *dst,
 	else
 		folio_migrate_flags(dst, src);
 	
-	folio_migrate_count_inc(dst);
 	return MIGRATEPAGE_SUCCESS;
 }
 
