@@ -53,7 +53,7 @@ def generate_heatmap_chunk(args):
     pivot_chunk = pivot.loc[start_idx:end_idx]
     
     plt.figure(figsize=(10, 8))
-    # imshow()는 전체 2차원 array를 한 번에 렌더링하므로 빠름.
+    # imshow()는 전체 2차원 array를 한 번에 렌더링하므로 빠르게 처리됨.
     plt.imshow(pivot_chunk.values, aspect='auto', cmap=cmap, vmin=0, vmax=global_vmax)
     plt.title(f"Node {node} Chunk {chunk_id}")
     plt.xlabel("Snapshot (Time)")
@@ -71,7 +71,12 @@ def stitch_images(image_files, output_file):
     """
     이미지 파일들을 세로로 결합하여 하나의 큰 이미지로 만든다.
     """
-    images = [Image.open(f) for f in image_files]
+    # 파일명을 추출해 청크 번호 순으로 정렬
+    sorted_chunk_files = sorted(
+        image_files,
+        key=lambda f: int(re.search(r'node_\d+_chunk_(\d+)\.png', f).group(1))
+    )
+    images = [Image.open(f) for f in sorted_chunk_files]
     widths = [img.width for img in images]
     heights = [img.height for img in images]
     
@@ -92,10 +97,11 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
     log_pattern에 맞는 모든 로그 파일을 결합하여 DataFrame을 생성하고,
     각 NUMA 노드별 히트맵을 생성하여 PNG 파일로 저장한다.
     
-    (히트맵 생성 전 각 노드의 PFN 범위와 수집한 총 스냅샷 갯수를 출력한다.)
-    그리고 한 노드의 히트맵 생성 작업은 PFN 행을 청크로 분할하여 병렬 처리한다.
+    히트맵을 생성하기 전에, 각 노드의 PFN 범위와 수집한 총 스냅샷 갯수를 출력한다.
+    그리고 한 노드의 히트맵 생성 작업은 PFN 행을 청크로 분할하여 병렬 처리한 후,
+    최종 병합된 이미지 파일만 남기고 임시 청크 파일은 삭제한다.
     """
-    # 로그 파일 목록 가져오기 (파일명에 포함된 스냅샷 번호 순으로 정렬)
+    # glob를 사용해 로그 파일 목록을 가져옴 (스냅샷 번호 순 정렬)
     log_files = sorted(glob.glob(log_pattern),
                        key=lambda x: int(re.search(r"folio_stats_snapshot_(\d+)\.log", x).group(1)))
     if not log_files:
@@ -142,9 +148,10 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
         all_snapshots = range(df["snapshot"].min(), df["snapshot"].max() + 1)
     print("Total number of snapshots collected:", len(all_snapshots))
     
-    # 전체 migrate_count의 최대값 (히트맵 색상 범위 기준)
-    global_vmax = df["migrate_count"].max() if not df.empty else 1
-
+    # 제일 마지막 스냅샷의 migrate_count 값 중 최댓값을 기준으로 global_vmax 설정 (정수 단위)
+    last_snapshot = df["snapshot"].max()
+    global_vmax = int(df[df["snapshot"] == last_snapshot]["migrate_count"].max())
+    
     # 각 노드별 히트맵 생성 (x축: 스냅샷, y축: PFN)
     for node in node_ranges.keys():
         node_df = df[df["node"] == node]
@@ -156,10 +163,12 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
                 aggfunc="sum",
                 fill_value=0
             )
-            # 해당 노드의 전체 PFN 범위를 포함하도록 인덱스 재설정
+            # 해당 노드의 전체 PFN 범위를 포함하도록 인덱스를 재설정
             start_pfn, end_pfn = node_ranges[node]
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pivot.reindex(index=full_pfn_range, fill_value=0)
+            # 정수형으로 캐스팅 (인트형 migrate_count 사용)
+            pivot = pivot.astype(int)
         else:
             print(f"No migration data for node {node}. Generating empty heatmap.")
             start_pfn, end_pfn = node_ranges[node]
@@ -175,7 +184,6 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
         tasks = []
         chunk_id = 0
         current_index = 0
-        # 각 청크별 작업 생성: pivot_index는 정렬되어 있으므로 순서대로 슬라이싱
         while current_index < len(pivot_index):
             start_idx = pivot_index[current_index]
             end_idx = pivot_index[min(current_index + chunk_size - 1, len(pivot_index) - 1)]
@@ -185,16 +193,28 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
             current_index += chunk_size
             chunk_id += 1
 
-        # 해당 노드별 청크 임시 파일 저장 디렉터리 생성
-        os.makedirs(f"./chunks_node_{node}", exist_ok=True)
-        # 병렬 처리: 각 청크 이미지 생성
+        # 해당 노드별 청크 임시 저장 디렉터리 생성
+        chunk_dir = f"./chunks_node_{node}"
+        os.makedirs(chunk_dir, exist_ok=True)
+        # 병렬 처리: 각 청크 이미지 생성 (가능한 모든 코어 사용)
         with mp.Pool(processes=mp.cpu_count()) as pool:
             chunk_files = pool.map(generate_heatmap_chunk, tasks)
-        # 청크 이미지들을 결합하여 최종 히트맵 이미지 생성
+        # 청크 이미지들을 병합하여 최종 히트맵 이미지 생성
         final_filename = f"node_{node}_migration_heatmap.png"
         stitch_images(chunk_files, final_filename)
         print(f"Final heatmap for node {node} saved as '{final_filename}'.")
-        # (선택사항) 임시 청크 파일 삭제 처리 가능
+        
+        # ---- 청크 이미지 삭제 ----
+        for f in chunk_files:
+            try:
+                os.remove(f)
+            except Exception as e:
+                print(f"Failed to delete temporary file {f}: {e}")
+        # 해당 청크 디렉터리 삭제 (비어있다면)
+        try:
+            os.rmdir(chunk_dir)
+        except Exception:
+            pass
 
     return df
 
