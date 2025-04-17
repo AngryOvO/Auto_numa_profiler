@@ -633,7 +633,6 @@ void folio_migrate_flags(struct folio *newfolio, struct folio *folio)
 
 	//[hayong] auto numa profiler
 	copy_migrate_count(newfolio, folio);
-	folio_migrate_count_inc(newfolio);
 	set_folio_migrate_count(folio, 0);
 
 	folio_migrate_ksm(newfolio, folio);
@@ -698,6 +697,7 @@ int migrate_folio_extra(struct address_space *mapping, struct folio *dst,
 	else
 		folio_migrate_flags(dst, src);
 	
+	folio_migrate_count_inc(dst);
 	return MIGRATEPAGE_SUCCESS;
 }
 
