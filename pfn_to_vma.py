@@ -28,7 +28,7 @@ def send_pid_to_syscall(pid):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Initializes folio_stats using syscall 464, executes a workload, sends "
+            "Initializes folio_stats using syscall 462, executes a workload, sends "
             "its PID via syscall 463, and collects data from "
             "/sys/kernel/debug/numa_folio/folio_stats every interval seconds. "
             "Each snapshot is saved as a separate log file."
@@ -88,7 +88,6 @@ def main():
                 log_file.write("=" * 80 + "\n")
                 log_file.write(data)
 
-            print(f"Snapshot {snapshot} saved to '{filename}'.")
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("Data collection interrupted by user. Terminating workload...")
