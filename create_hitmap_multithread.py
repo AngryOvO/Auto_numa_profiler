@@ -4,6 +4,7 @@ import re
 import sys
 import glob
 import os
+import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -98,7 +99,8 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
     각 NUMA 노드별 히트맵을 생성하여 PNG 파일로 저장한다.
     
     히트맵을 생성하기 전에, 각 노드의 PFN 범위와 수집한 총 스냅샷 갯수를 출력한다.
-    그리고 한 노드의 히트맵 생성 작업은 PFN 행을 청크로 분할하여 병렬 처리한 후,
+    그리고 한 노드의 히트맵 생성 작업은 PFN 행을 청크로 분할하여
+    사용 가능한 CPU 코어 수에 맞춰 청크 사이즈를 계산한 후 병렬 처리하고,
     최종 병합된 이미지 파일만 남기고 임시 청크 파일은 삭제한다.
     """
     # glob를 사용해 로그 파일 목록을 가져옴 (스냅샷 번호 순 정렬)
@@ -112,7 +114,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
     # 로그 파일에서 folio 통계 라인을 추출하기 위한 정규식
     line_regex = re.compile(r"folio node:?\s*(\d+),\s*pfn:?\s*(\d+),\s*source_nid:?\s*(\d+),\s*migrate_count:?\s*(\d+)")
     
-    # 각 로그 파일의 데이터 추출
+    # 각 로그 파일의 데이터를 추출
     for log_file in log_files:
         m_snapshot = re.search(r"folio_stats_snapshot_(\d+)\.log", log_file)
         if not m_snapshot:
@@ -167,7 +169,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
             start_pfn, end_pfn = node_ranges[node]
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pivot.reindex(index=full_pfn_range, fill_value=0)
-            # 정수형으로 캐스팅 (인트형 migrate_count 사용)
+            # 정수형으로 캐스팅
             pivot = pivot.astype(int)
         else:
             print(f"No migration data for node {node}. Generating empty heatmap.")
@@ -178,15 +180,19 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
         print(f"Node {node} pivot shape: {pivot.shape}")
 
         # --- 병렬 처리로 한 노드 내 히트맵 생성 ---
-        # PFN 범위를 일정 청크 단위로 분할
-        chunk_size = 10000  # 필요에 따라 조정
+        # 사용 가능한 코어 수에 따라 청크 사이즈 계산
+        num_cores = mp.cpu_count()
         pivot_index = list(pivot.index)
+        total_pfns = len(pivot_index)
+        chunk_size = math.ceil(total_pfns / num_cores)
+        print(f"Node {node}: total PFNs = {total_pfns}, CPU cores = {num_cores}, chunk size = {chunk_size}")
+
         tasks = []
         chunk_id = 0
         current_index = 0
-        while current_index < len(pivot_index):
+        while current_index < total_pfns:
             start_idx = pivot_index[current_index]
-            end_idx = pivot_index[min(current_index + chunk_size - 1, len(pivot_index) - 1)]
+            end_idx = pivot_index[min(current_index + chunk_size - 1, total_pfns - 1)]
             tasks.append((node, chunk_id, pivot, start_idx, end_idx, global_vmax,
                           LinearSegmentedColormap.from_list("Thermal", ["navy", "red", "yellow"], N=256),
                           f"./chunks_node_{node}"))
@@ -210,7 +216,6 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
                 os.remove(f)
             except Exception as e:
                 print(f"Failed to delete temporary file {f}: {e}")
-        # 해당 청크 디렉터리 삭제 (비어있다면)
         try:
             os.rmdir(chunk_dir)
         except Exception:
