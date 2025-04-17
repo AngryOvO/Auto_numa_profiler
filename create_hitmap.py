@@ -103,7 +103,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_logs/folio_stats_snaps
     global_vmax = int(df[df["snapshot"] == last_snapshot]["migrate_count"].max())
     
     # 각 노드별 히트맵 생성 (x축: 스냅샷, y축: PFN)
-    # 단일 스레드로 진행하므로 for-loop로 처리
+    # 단일 스레드 처리: for-loop로 진행
     for node in node_ranges.keys():
         node_df = df[df["node"] == node]
         if not node_df.empty:
@@ -114,7 +114,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_logs/folio_stats_snaps
                 aggfunc="sum",
                 fill_value=0
             )
-            # 해당 노드의 전체 PFN 범위 적용
+            # 해당 노드의 전체 PFN 범위를 적용
             start_pfn, end_pfn = node_ranges[node]
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pivot.reindex(index=full_pfn_range, fill_value=0)
@@ -131,7 +131,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_logs/folio_stats_snaps
         # 정확한 히트맵 생성 (단일 스레드)
         cmap = LinearSegmentedColormap.from_list("Thermal", ["navy", "red", "yellow"], N=256)
         plt.figure(figsize=(10, 8))
-        # annot=True로 각 셀에 정수값을 표기 (정확한 migrate_count 값 확인)
+        # annot=True로 각 셀에 정수값 표기
         sns.heatmap(pivot, cmap=cmap, cbar=True, vmin=0, vmax=global_vmax, annot=True, fmt="d")
         plt.title(f"Node {node} - Migration Heatmap")
         plt.xlabel("Snapshot (Time)")
@@ -148,14 +148,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Combine folio_stats_snapshot log files to build a DataFrame and generate migration heatmaps."
     )
-    parser.add_argument("--log_pattern", type=str, default="folio_stats_snapshot_*.log",
-                        help="Glob pattern for identifying log files (default: folio_stats_snapshot_*.log)")
+    parser.add_argument("--log_pattern", type=str, default="folio_logs/folio_stats_snapshot_*.log",
+                        help="Glob pattern for identifying log files (default: folio_logs/folio_stats_snapshot_*.log)")
     parser.add_argument("--node_pfn_stats", type=str, default="/sys/kernel/debug/numa_folio/pfn_stats",
                         help="Path to the node_pfn_stats file (default: /sys/kernel/debug/numa_folio/pfn_stats)")
     args = parser.parse_args()
 
     df = combine_logs_and_generate_heatmaps(args.log_pattern, args.node_pfn_stats)
-    # 결합된 데이터를 CSV 파일로 저장 (옵션)
+    # 결합된 데이터 CSV 파일로 저장
     df.to_csv("combined_folio_stats.csv", index=False)
     print("Combined data saved as 'combined_folio_stats.csv'.")
 
