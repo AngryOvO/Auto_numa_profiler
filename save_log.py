@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 import ctypes
+import os
 
 # syscall 462를 호출하여 folio_stat을 초기화하는 함수
 def execute_folio_stat_reset():
@@ -31,7 +32,7 @@ def main():
             "Initializes folio_stats using syscall 462, executes a workload, sends "
             "its PID via syscall 463, and collects data from "
             "/sys/kernel/debug/numa_folio/folio_stats every interval seconds. "
-            "Each snapshot is saved as a separate log file."
+            "Each snapshot is saved as a separate log file in a designated directory."
         )
     )
     parser.add_argument(
@@ -45,11 +46,21 @@ def main():
         default=1.0,
         help="Data collection interval in seconds (default: 1.0 sec)."
     )
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default="folio_logs",
+        help="Directory where snapshot log files will be saved (default: folio_logs)."
+    )
     args = parser.parse_args()
 
     if not args.command:
         print("Error: No workload command provided.")
         sys.exit(1)
+
+    # 지정된 로그 디렉터리 생성 (존재하지 않으면)
+    if not os.path.exists(args.log_dir):
+        os.makedirs(args.log_dir)
 
     # folio_stat 초기화를 위한 syscall 464 실행
     execute_folio_stat_reset()
@@ -69,7 +80,7 @@ def main():
     time.sleep(0.1)
     send_pid_to_syscall(proc.pid)
 
-    print("Starting data collection. Each snapshot will be saved as a separate log file...")
+    print("Starting data collection. Each snapshot will be saved as a separate log file in '{}'...".format(args.log_dir))
     snapshot = 0
     try:
         while proc.poll() is None:
@@ -81,8 +92,8 @@ def main():
                 print(f"Error reading /sys/kernel/debug/numa_folio/folio_stats: {e}")
                 break
 
-            # 타임스탬프 없이 snapshot 번호만 활용하여 파일 이름 지정
-            filename = f"folio_stats_snapshot_{snapshot}.log"
+            # 저장 경로를 args.log_dir 안에 생성
+            filename = os.path.join(args.log_dir, f"folio_stats_snapshot_{snapshot}.log")
             with open(filename, "w") as log_file:
                 log_file.write(f"Snapshot {snapshot}\n")
                 log_file.write("=" * 80 + "\n")
