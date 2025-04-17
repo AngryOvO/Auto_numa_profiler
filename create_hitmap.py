@@ -35,8 +35,9 @@ def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
             except ValueError:
                 current_node = None
         elif line.startswith("start pfn"):
-            m = re.search(r'start pfn\s+(\d+)[,]?\s*(?:end pfn\s+)?(\d+)', line)
-            if m and current_node is not None:
+            # 정규식: "start pfn: 숫자, end pfn: 숫자" 형태에 대응
+            m = re.search(r'start pfn:?\s*(\d+)[,]?\s*(?:end pfn:?\s*(\d+))', line)
+            if m and (current_node is not None):
                 node_ranges[current_node] = (int(m.group(1)), int(m.group(2)))
                 current_node = None
     return node_ranges
@@ -55,7 +56,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
         sys.exit(1)
 
     collected_data = []
-    # 각 로그 파일 내에서 folio 통계 라인을 추출하기 위한 정규식 (공백이나 콜론의 위치가 유연하도록 허용)
+    # 각 로그 파일 내에서 folio 통계 라인을 추출하기 위한 정규식
     line_regex = re.compile(r"folio node:?\s*(\d+),\s*pfn:?\s*(\d+),\s*source_nid:?\s*(\d+),\s*migrate_count:?\s*(\d+)")
     
     # 각 로그 파일마다 데이터를 추출
@@ -85,7 +86,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
     print("Collected data sample:")
     print(df.head())
 
-    # /sys/kernel/debug/numa_folio/pfn_stats 파일을 파싱하여 노드별 PFN 범위 확보
+    # 노드별 PFN 범위를 확보
     node_ranges = parse_node_pfn_stats(node_pfn_stats_path)
     print("Node PFN ranges:")
     print(node_ranges)
@@ -96,11 +97,11 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
     else:
         all_snapshots = range(df["snapshot"].min(), df["snapshot"].max() + 1)
 
-    # 모든 노드에 대해 전체 migrate_count의 최대값을 구함 (히트맵 색상 범위에 사용)
+    # 전체 migrate_count의 최대값 (히트맵 색상 범위에 사용)
     global_vmax = df["migrate_count"].max() if not df.empty else 1
     print(f"Global vmax (maximum migrate_count): {global_vmax}")
 
-    # 노드별로 히트맵 생성
+    # 각 노드별 히트맵 생성
     for node in node_ranges.keys():
         node_df = df[df["node"] == node]
         if not node_df.empty:
@@ -110,8 +111,8 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
                 values="migrate_count",
                 aggfunc="sum",
                 fill_value=0
-            ).fillna(0)
-            # 노드의 전체 PFN 범위를 포함하도록 인덱스 강제 재설정
+            )
+            # 노드 전체 PFN 범위를 포함하도록 인덱스 재설정
             start_pfn, end_pfn = node_ranges[node]
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pivot.reindex(index=full_pfn_range, fill_value=0)
@@ -120,6 +121,9 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
             start_pfn, end_pfn = node_ranges[node]
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pd.DataFrame(0, index=full_pfn_range, columns=all_snapshots)
+
+        # (선택사항) 디버그: pivot 테이블의 크기를 출력하면 큰 범위에 대한 확인에 도움이 됨
+        print(f"Node {node} pivot shape: {pivot.shape}")
 
         # 히트맵 생성: 열화상 스타일 컬러맵 사용
         cmap = LinearSegmentedColormap.from_list("Thermal", ["navy", "red", "yellow"], N=256)
@@ -155,7 +159,7 @@ def main():
     args = parser.parse_args()
 
     df = combine_logs_and_generate_heatmaps(args.log_pattern, args.node_pfn_stats)
-    # 결합된 데이터를 CSV 파일로 저장(선택사항)
+    # 결합된 데이터를 CSV 파일로 저장 (선택사항)
     df.to_csv("combined_folio_stats.csv", index=False)
     print("Combined data saved as 'combined_folio_stats.csv'.")
 
