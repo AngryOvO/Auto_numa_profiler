@@ -35,7 +35,6 @@ def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
             except ValueError:
                 current_node = None
         elif line.startswith("start pfn"):
-            # 정규식: "start pfn: 숫자, end pfn: 숫자" 형태에 대응
             m = re.search(r'start pfn:?\s*(\d+)[,]?\s*(?:end pfn:?\s*(\d+))', line)
             if m and (current_node is not None):
                 node_ranges[current_node] = (int(m.group(1)), int(m.group(2)))
@@ -47,8 +46,10 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
     """
     log_pattern에 맞는 모든 로그 파일을 결합하여 DataFrame을 생성하고,
     각 NUMA 노드별 히트맵을 생성하여 PNG 파일로 저장한다.
+    
+    히트맵을 생성하기 전에, 각 노드의 PFN 범위와 수집한 총 스냅샷 갯수를 출력한다.
     """
-    # glob를 사용해 로그 파일 목록을 가져온다.
+    # glob를 사용해 로그 파일 목록을 가져옴
     log_files = sorted(glob.glob(log_pattern),
                        key=lambda x: int(re.search(r"folio_stats_snapshot_(\d+)\.log", x).group(1)))
     if not log_files:
@@ -56,12 +57,12 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
         sys.exit(1)
 
     collected_data = []
-    # 각 로그 파일 내에서 folio 통계 라인을 추출하기 위한 정규식
+    # 로그 파일에서 folio 통계 라인을 추출하기 위한 정규식
     line_regex = re.compile(r"folio node:?\s*(\d+),\s*pfn:?\s*(\d+),\s*source_nid:?\s*(\d+),\s*migrate_count:?\s*(\d+)")
     
-    # 각 로그 파일마다 데이터를 추출
+    # 각 로그 파일의 데이터를 추출
     for log_file in log_files:
-        # 파일 이름에서 스냅샷 번호 추출
+        # 파일 이름에서 스냅샷 번호를 추출
         m_snapshot = re.search(r"folio_stats_snapshot_(\d+)\.log", log_file)
         if not m_snapshot:
             continue
@@ -83,25 +84,23 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
 
     # DataFrame 생성
     df = pd.DataFrame(collected_data, columns=["node", "pfn", "source_nid", "migrate_count", "snapshot"])
-    print("Collected data sample:")
-    print(df.head())
-
-    # 노드별 PFN 범위를 확보
+    
+    # 노드별 PFN 범위 확보
     node_ranges = parse_node_pfn_stats(node_pfn_stats_path)
     print("Node PFN ranges:")
     print(node_ranges)
-
+    
     # 스냅샷 범위 설정 (최소 ~ 최대 스냅샷)
     if df.empty:
         all_snapshots = range(0, 2)
     else:
         all_snapshots = range(df["snapshot"].min(), df["snapshot"].max() + 1)
-
+    print("Total number of snapshots collected:", len(all_snapshots))
+    
     # 전체 migrate_count의 최대값 (히트맵 색상 범위에 사용)
     global_vmax = df["migrate_count"].max() if not df.empty else 1
-    print(f"Global vmax (maximum migrate_count): {global_vmax}")
 
-    # 각 노드별 히트맵 생성
+    # 노드별 히트맵 생성 (x축: 스냅샷, y축: pfn)
     for node in node_ranges.keys():
         node_df = df[df["node"] == node]
         if not node_df.empty:
@@ -112,7 +111,7 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
                 aggfunc="sum",
                 fill_value=0
             )
-            # 노드 전체 PFN 범위를 포함하도록 인덱스 재설정
+            # 해당 노드의 전체 PFN 범위를 포함하도록 인덱스를 재설정
             start_pfn, end_pfn = node_ranges[node]
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pivot.reindex(index=full_pfn_range, fill_value=0)
@@ -122,10 +121,10 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
             full_pfn_range = range(start_pfn, end_pfn + 1)
             pivot = pd.DataFrame(0, index=full_pfn_range, columns=all_snapshots)
 
-        # (선택사항) 디버그: pivot 테이블의 크기를 출력하면 큰 범위에 대한 확인에 도움이 됨
+        # (선택사항) 디버그: pivot 테이블의 크기 출력
         print(f"Node {node} pivot shape: {pivot.shape}")
 
-        # 히트맵 생성: 열화상 스타일 컬러맵 사용
+        # 히트맵 생성 (열: 스냅샷, 행: PFN)
         cmap = LinearSegmentedColormap.from_list("Thermal", ["navy", "red", "yellow"], N=256)
         plt.figure(figsize=(10, 8))
         sns.heatmap(
