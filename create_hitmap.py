@@ -42,7 +42,7 @@ def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
                 current_node = None
     return node_ranges
 
-def combine_logs_and_generate_heatmaps(log_pattern="folio_stats_snapshot_*.log",
+def combine_logs_and_generate_heatmaps(log_pattern="folio_logs/folio_stats_snapshot_*.log",
                                          node_pfn_stats_path="/sys/kernel/debug/numa_folio/pfn_stats"):
     """
     로그 파일을 결합하여 DataFrame을 생성하고,
