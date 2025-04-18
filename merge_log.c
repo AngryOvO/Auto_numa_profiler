@@ -4,14 +4,17 @@
 #include <dirent.h>
 #include <errno.h>
 
-void integrate_snapshots(const char *log_dir, const char *output_file) {
-    DIR *dir = opendir(log_dir);
+#define LOG_DIR "folio_logs"          // 고정된 로그 디렉토리 경로
+#define OUTPUT_FILE "integrated_data.csv" // 고정된 출력 CSV 파일 이름
+
+void integrate_snapshots() {
+    DIR *dir = opendir(LOG_DIR);
     if (!dir) {
         perror("Error opening log directory");
         exit(EXIT_FAILURE);
     }
 
-    FILE *output = fopen(output_file, "w");
+    FILE *output = fopen(OUTPUT_FILE, "w");
     if (!output) {
         perror("Error opening output file");
         closedir(dir);
@@ -23,8 +26,11 @@ void integrate_snapshots(const char *log_dir, const char *output_file) {
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
         if (strstr(entry->d_name, "folio_stats_snapshot_") && strstr(entry->d_name, ".log")) {
-            char filepath[256];
-            snprintf(filepath, sizeof(filepath), "%s/%s", log_dir, entry->d_name);
+            char filepath[1024];
+            if (snprintf(filepath, sizeof(filepath), "%s/%s", LOG_DIR, entry->d_name) >= sizeof(filepath)) {
+                fprintf(stderr, "Error: File path too long: %s/%s\n", LOG_DIR, entry->d_name);
+                continue;
+            }
 
             FILE *file = fopen(filepath, "r");
             if (!file) {
@@ -53,19 +59,10 @@ void integrate_snapshots(const char *log_dir, const char *output_file) {
     fclose(output);
     closedir(dir);
 
-    printf("Integrated data saved to %s\n", output_file);
+    printf("Integrated data saved to %s\n", OUTPUT_FILE);
 }
 
-int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s <log_dir> <output_file>\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    const char *log_dir = argv[1];
-    const char *output_file = argv[2];
-
-    integrate_snapshots(log_dir, output_file);
-
+int main() {
+    integrate_snapshots();
     return EXIT_SUCCESS;
 }
