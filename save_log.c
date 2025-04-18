@@ -38,24 +38,9 @@ void create_directory(const char *path) {
 
 void collect_data(const char *log_dir, pid_t workload_pid) {
     char buffer[65536]; // 64KB 버퍼
-    char filename[256];
+    int snapshot = 0;
 
-    // 스냅샷 파일 생성
-    snprintf(filename, sizeof(filename), "%s/folio_stats_snapshot.log", log_dir);
-    FILE *output_file = fopen(filename, "w");
-    if (!output_file) {
-        perror("Error opening snapshot file");
-        return;
-    }
-
-    printf("Collecting data into %s until workload finishes...\n", filename);
-
-    int fd = open("/sys/kernel/debug/numa_folio/folio_stats", O_RDONLY);
-    if (fd < 0) {
-        perror("Error opening /sys/kernel/debug/numa_folio/folio_stats");
-        fclose(output_file);
-        return;
-    }
+    printf("Collecting data into snapshot files in %s until workload finishes...\n", log_dir);
 
     while (1) {
         // 워크로드 프로세스 상태 확인
@@ -64,26 +49,56 @@ void collect_data(const char *log_dir, pid_t workload_pid) {
             break;
         }
 
-        // folio_stats 파일 읽기
-        ssize_t bytes_read = read(fd, buffer, sizeof(buffer) - 1);
-        if (bytes_read < 0) {
-            perror("Error reading /sys/kernel/debug/numa_folio/folio_stats");
+        // folio_stats 파일 열기
+        int fd = open("/sys/kernel/debug/numa_folio/folio_stats", O_RDONLY);
+        if (fd < 0) {
+            perror("Error opening /sys/kernel/debug/numa_folio/folio_stats");
             break;
         }
 
-        if (bytes_read > 0) {
-            buffer[bytes_read] = '\0'; // null-terminate the buffer
-            fprintf(output_file, "%s", buffer); // 데이터를 파일에 기록
+        // folio_stats 파일 읽기
+        ssize_t total_bytes_read = 0;
+        FILE *output_file = NULL;
+
+        // 스냅샷 파일 생성
+        char filename[256];
+        snprintf(filename, sizeof(filename), "%s/folio_stats_snapshot_%d.log", log_dir, ++snapshot);
+        output_file = fopen(filename, "w");
+        if (!output_file) {
+            perror("Error opening snapshot file");
+            close(fd);
+            break;
         }
 
-        // 잠시 대기 (짧은 간격으로 반복)
-        usleep(100000); // 0.1초 대기
+        while (1) {
+            ssize_t bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+            if (bytes_read < 0) {
+                perror("Error reading /sys/kernel/debug/numa_folio/folio_stats");
+                fclose(output_file);
+                close(fd);
+                return;
+            }
+
+            if (bytes_read == 0) {
+                // 파일 끝에 도달
+                break;
+            }
+
+            buffer[bytes_read] = '\0'; // null-terminate the buffer
+            fprintf(output_file, "%s", buffer); // 데이터를 파일에 기록
+            total_bytes_read += bytes_read;
+        }
+
+        fclose(output_file);
+        close(fd);
+
+        printf("Snapshot %d saved to %s (%zd bytes read)\n", snapshot, filename, total_bytes_read);
+
+        // 1초 대기
+        sleep(1);
     }
 
-    close(fd);
-    fclose(output_file);
-
-    printf("Data collection completed. Data saved to %s\n", filename);
+    printf("Data collection completed. %d snapshots saved in %s\n", snapshot, log_dir);
 }
 
 int main(int argc, char *argv[]) {
