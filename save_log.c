@@ -53,9 +53,40 @@ void save_node_data(const char *log_dir, int snapshot, int node, const char *dat
     fclose(file);
 }
 
-void collect_data(const char *log_dir, float interval) {
+void parse_pfn_stats(const char *pfn_stats_path, int *node_start_pfn, int *node_end_pfn, int max_nodes) {
+    FILE *file = fopen(pfn_stats_path, "r");
+    if (!file) {
+        perror("Error opening pfn_stats file");
+        exit(EXIT_FAILURE);
+    }
+
+    char line[256];
+    int current_node = -1;
+    while (fgets(line, sizeof(line), file)) {
+        if (sscanf(line, "node %d", &current_node) == 1) {
+            // 노드 번호를 읽음
+            if (current_node < 0 || current_node >= max_nodes) {
+                fprintf(stderr, "Invalid node number in pfn_stats: %d\n", current_node);
+                continue;
+            }
+        } else if (current_node >= 0 && sscanf(line, "start pfn: %d, end pfn: %d", &node_start_pfn[current_node], &node_end_pfn[current_node]) == 2) {
+            // 현재 노드의 PFN 범위를 읽음
+            printf("Node %d: start pfn = %d, end pfn = %d\n", current_node, node_start_pfn[current_node], node_end_pfn[current_node]);
+        }
+    }
+
+    fclose(file);
+}
+
+void collect_data(const char *log_dir, float interval, const char *pfn_stats_path) {
     int snapshot = 0;
-    char buffer[1024];
+    char buffer[65536]; // 더 큰 버퍼로 설정 (64KB)
+
+    // PFN 범위 초기화
+    int node_start_pfn[256] = {0};
+    int node_end_pfn[256] = {0};
+    parse_pfn_stats(pfn_stats_path, node_start_pfn, node_end_pfn, 256);
+
     while (1) {
         snapshot++;
         int fd = open("/sys/kernel/debug/numa_folio/folio_stats", O_RDONLY);
@@ -71,18 +102,40 @@ void collect_data(const char *log_dir, float interval) {
             break;
         }
 
-        buffer[bytes_read] = '\0';
+        buffer[bytes_read] = '\0'; // null-terminate the buffer
 
-        // Parse data and save by node
+        // 노드별 데이터를 저장할 버퍼 초기화
+        char node_data[256][65536] = {0}; // 최대 256개의 노드, 각 노드에 대해 64KB 버퍼
+        int node_data_lengths[256] = {0}; // 각 노드의 데이터 길이 추적
+
+        // 데이터를 한 줄씩 파싱
         char *line = strtok(buffer, "\n");
         while (line) {
             int node, pfn, source_nid, migrate_count;
             if (sscanf(line, "%d,%d,%d,%d", &node, &pfn, &source_nid, &migrate_count) == 4) {
-                save_node_data(log_dir, snapshot, node, line);
+                // PFN 범위 확인
+                if (node >= 0 && node < 256 && pfn >= node_start_pfn[node] && pfn <= node_end_pfn[node]) {
+                    // 노드 데이터에 현재 라인을 추가
+                    int len = snprintf(node_data[node] + node_data_lengths[node],
+                                       sizeof(node_data[node]) - node_data_lengths[node],
+                                       "%s\n", line);
+                    if (len > 0) {
+                        node_data_lengths[node] += len;
+                    }
+                } else {
+                    fprintf(stderr, "Skipping line outside PFN range: %s\n", line);
+                }
             } else {
                 fprintf(stderr, "Skipping malformed line: %s\n", line);
             }
             line = strtok(NULL, "\n");
+        }
+
+        // 노드별로 스냅샷 파일 생성
+        for (int node = 0; node < 256; node++) {
+            if (node_data_lengths[node] > 0) {
+                save_node_data(log_dir, snapshot, node, node_data[node]);
+            }
         }
 
         sleep((unsigned int)interval);
@@ -91,12 +144,13 @@ void collect_data(const char *log_dir, float interval) {
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s --log_dir <log_dir> --interval <interval> <command> [args...]\n", argv[0]);
+        fprintf(stderr, "Usage: %s --log_dir <log_dir> --interval <interval> --pfn_stats <pfn_stats_path> <command> [args...]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
     const char *log_dir = "folio_logs";
     float interval = 1.0;
+    const char *pfn_stats_path = "/sys/kernel/debug/numa_folio/pfn_stats";
     char **command = NULL;
 
     // Parse arguments
@@ -105,6 +159,8 @@ int main(int argc, char *argv[]) {
             log_dir = argv[++i];
         } else if (strcmp(argv[i], "--interval") == 0 && i + 1 < argc) {
             interval = atof(argv[++i]);
+        } else if (strcmp(argv[i], "--pfn_stats") == 0 && i + 1 < argc) {
+            pfn_stats_path = argv[++i];
         } else {
             command = &argv[i];
             break;
@@ -138,7 +194,7 @@ int main(int argc, char *argv[]) {
     send_pid_to_syscall(pid);
 
     // Collect data
-    collect_data(log_dir, interval);
+    collect_data(log_dir, interval, pfn_stats_path);
 
     // Wait for workload to finish
     waitpid(pid, NULL, 0);
