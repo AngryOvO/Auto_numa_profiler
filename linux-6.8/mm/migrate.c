@@ -2734,7 +2734,7 @@ static int numa_folio_stats_show(struct seq_file *m, void *v)
                 unsigned long node_pfn = get_pfn_for_node(nid, pfn);
                 if (atomic_read(&stat[node_pfn].current_migrate_count) > 0) {
 					// current_folio_nid, currunt_folio_pfn, source_nid, current_migrate_count
-                    seq_printf(m, "f%d,%lu,%d,%d\n", nid, pfn, stat[node_pfn].source_nid, atomic_read(&stat[node_pfn].current_migrate_count));
+                    seq_printf(m, "%d,%lu,%d,%d\n", nid, pfn, stat[node_pfn].source_nid, atomic_read(&stat[node_pfn].current_migrate_count));
                 }
             }
         }
