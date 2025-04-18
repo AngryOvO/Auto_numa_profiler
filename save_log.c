@@ -36,11 +36,17 @@ void create_directory(const char *path) {
     }
 }
 
-void collect_data(const char *log_dir, float interval) {
+void collect_data(const char *log_dir, float interval, pid_t workload_pid) {
     int snapshot = 0;
     char buffer[65536]; // 64KB 버퍼
 
     while (1) {
+        // 워크로드 프로세스 상태 확인
+        if (waitpid(workload_pid, NULL, WNOHANG) > 0) {
+            printf("Workload process has exited. Stopping data collection.\n");
+            break;
+        }
+
         snapshot++;
         int fd = open("/sys/kernel/debug/numa_folio/folio_stats", O_RDONLY);
         if (fd < 0) {
@@ -127,7 +133,7 @@ int main(int argc, char *argv[]) {
     send_pid_to_syscall(pid);
 
     // 데이터 수집
-    collect_data(log_dir, interval);
+    collect_data(log_dir, interval, pid);
 
     // 워크로드 종료 대기
     waitpid(pid, NULL, 0);
