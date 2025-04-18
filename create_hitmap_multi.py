@@ -10,20 +10,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
-# Datashader 및 관련 모듈 임포트 (dask.distributed를 사용하여 멀티프로세싱으로 설정)
 try:
     import datashader.transfer_functions as tf
     import colorcet as cc
     import dask.array as da
-    from dask.distributed import Client
+    from dask.distributed import Client  # 반드시 main() 내부에서 사용할 것
 except ImportError as e:
     print("ImportError:", e)
     sys.exit(1)
-
-# 모든 사용가능한 코어를 활용하기 위한 Dask 클라이언트 생성 (각 워커 1개의 쓰레드 사용)
-client = Client(n_workers=os.cpu_count(), threads_per_worker=1)
-print("Dask Distributed Client started:")
-print(client)
 
 def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
     node_ranges = {}
@@ -118,14 +112,20 @@ def combine_logs_and_generate_heatmaps(log_pattern="folio_logs/folio_stats_snaps
 
         print(f"Node {node} pivot shape: {pivot.shape}")
         darr = da.from_array(pivot.to_numpy(), chunks="auto")
+        # Datashader를 통한 병렬 렌더링 – Dask distributed 클라이언트를 사용하여 모든 코어를 활용
         img = tf.shade(darr, cmap=cc.fire, how='linear')
         final_filename = f"node_{node}_migration_heatmap.png"
         img.to_pil().save(final_filename)
         print(f"Final heatmap for node {node} saved as '{final_filename}'.")
-
     return df
 
 def main():
+    # 여기서 Dask Distributed Client를 생성합니다.
+    from dask.distributed import Client
+    client = Client(n_workers=os.cpu_count(), threads_per_worker=1)
+    print("Dask Distributed Client started:")
+    print(client)
+
     parser = argparse.ArgumentParser(
         description="Combine folio_stats_snapshot log files to build a DataFrame and generate migration heatmaps using Datashader with multiprocessing."
     )
@@ -139,5 +139,5 @@ def main():
     df.to_csv("combined_folio_stats.csv", index=False)
     print("Combined data saved as 'combined_folio_stats.csv'.")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
