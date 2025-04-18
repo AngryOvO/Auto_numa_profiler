@@ -5,6 +5,7 @@ import sys
 import glob
 import os
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
     """
@@ -37,29 +38,17 @@ def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
                 current_node = None
     return node_ranges
 
-def combine_logs_and_generate_csv(log_pattern="folio_logs/folio_stats_snapshot_*.log",
-                                   node_pfn_stats_path="/sys/kernel/debug/numa_folio/pfn_stats"):
+def process_log_file(log_file, line_regex):
     """
-    로그 파일을 결합하여 DataFrame을 생성하고, 
-    최종적으로 CSV 파일로 저장한다.
+    단일 로그 파일에서 folio 통계를 추출하여 리스트로 반환한다.
+    각 항목은 [node, pfn, source_nid, migrate_count, snapshot] 형식이다.
     """
-    # 파일명에 포함된 스냅샷 번호 순으로 로그 파일 정렬
-    log_files = sorted(glob.glob(log_pattern),
-                       key=lambda x: int(re.search(r"folio_stats_snapshot_(\d+)\.log", x).group(1)))
-    if not log_files:
-        print("No log files found matching pattern", log_pattern)
-        sys.exit(1)
-
-    collected_data = []
-    # 로그 파일에서 folio 통계 라인을 추출하기 위한 정규식
-    line_regex = re.compile(r"folio node:?\s*(\d+),\s*pfn:?\s*(\d+),\s*source_nid:?\s*(\d+),\s*migrate_count:?\s*(\d+)")
-
-    # 각 로그 파일의 데이터를 추출
-    for log_file in log_files:
-        m_snapshot = re.search(r"folio_stats_snapshot_(\d+)\.log", log_file)
-        if not m_snapshot:
-            continue
-        snapshot = int(m_snapshot.group(1))
+    data = []
+    m_snapshot = re.search(r"folio_stats_snapshot_(\d+)\.log", log_file)
+    if not m_snapshot:
+        return data
+    snapshot = int(m_snapshot.group(1))
+    try:
         with open(log_file, "r") as f:
             for line in f:
                 m = line_regex.search(line)
@@ -68,8 +57,37 @@ def combine_logs_and_generate_csv(log_pattern="folio_logs/folio_stats_snapshot_*
                     pfn = int(m.group(2))
                     source_nid = int(m.group(3))
                     migrate_count = int(m.group(4))
-                    collected_data.append([node, pfn, source_nid, migrate_count, snapshot])
+                    data.append([node, pfn, source_nid, migrate_count, snapshot])
+    except Exception as e:
+        print(f"Error reading {log_file}: {e}")
+    return data
+
+def combine_logs_and_generate_csv(log_pattern="folio_logs/folio_stats_snapshot_*.log",
+                                   node_pfn_stats_path="/sys/kernel/debug/numa_folio/pfn_stats"):
+    """
+    로그 파일들을 병렬 처리하여 DataFrame을 생성하고,
+    최종적으로 하나의 CSV 파일로 저장한다.
+    """
+    # 파일명에 포함된 스냅샷 번호 순으로 로그 파일 정렬
+    log_files = sorted(
+        glob.glob(log_pattern),
+        key=lambda x: int(re.search(r"folio_stats_snapshot_(\d+)\.log", x).group(1))
+    )
+    if not log_files:
+        print("No log files found matching pattern", log_pattern)
+        sys.exit(1)
+
+    collected_data = []
+    line_regex = re.compile(r"folio node:?\s*(\d+),\s*pfn:?\s*(\d+),\s*source_nid:?\s*(\d+),\s*migrate_count:?\s*(\d+)")
     
+    # ThreadPoolExecutor를 사용하여 로그 파일들을 병렬 처리
+    max_workers = os.cpu_count()  # 사용 가능한 모든 코어 수 만큼 스레드 지정
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 각 로그 파일에 대해 처리 태스크 제출
+        futures = [executor.submit(process_log_file, log_file, line_regex) for log_file in log_files]
+        for future in as_completed(futures):
+            collected_data.extend(future.result())
+
     if not collected_data:
         print("No data extracted from log files.")
         sys.exit(1)
@@ -77,7 +95,7 @@ def combine_logs_and_generate_csv(log_pattern="folio_logs/folio_stats_snapshot_*
     # DataFrame 생성
     df = pd.DataFrame(collected_data, columns=["node", "pfn", "source_nid", "migrate_count", "snapshot"])
 
-    # 노드별 PFN 범위
+    # 노드별 PFN 범위 파싱
     node_ranges = parse_node_pfn_stats(node_pfn_stats_path)
     print("Node PFN ranges:")
     print(node_ranges)
@@ -89,13 +107,15 @@ def combine_logs_and_generate_csv(log_pattern="folio_logs/folio_stats_snapshot_*
         all_snapshots = range(df["snapshot"].min(), df["snapshot"].max() + 1)
     print("Total number of snapshots collected:", len(all_snapshots))
     
-    # DataFrame을 CSV 파일로 저장
-    df.to_csv("combined_folio_stats.csv", index=False)
-    print("Combined data saved as 'combined_folio_stats.csv'.")
+    # CSV 파일로 저장
+    csv_filename = "combined_folio_stats.csv"
+    df.to_csv(csv_filename, index=False)
+    print(f"Combined data saved as '{csv_filename}'.")
+    return df
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Combine folio_stats_snapshot log files to build a DataFrame and generate CSV output."
+        description="Combine folio_stats_snapshot log files to build a DataFrame and generate CSV output using multithreading."
     )
     parser.add_argument("--log_pattern", type=str, default="folio_logs/folio_stats_snapshot_*.log",
                         help="Glob pattern for identifying log files (default: folio_logs/folio_stats_snapshot_*.log)")
