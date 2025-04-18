@@ -15,11 +15,14 @@ try:
     import datashader.transfer_functions as tf
     import colorcet as cc
     import dask
-    # 스레드 기반 스케줄러 사용 (기본값이 'threads'인 경우가 많지만 명시적으로 설정)
     dask.config.set(scheduler='threads')
-except ImportError:
-    print("Error: datashader 및 colorcet 모듈이 필요합니다. 'pip install datashader colorcet' 명령어로 설치하세요.")
+except ImportError as e:
+    print("ImportError:", e)
     sys.exit(1)
+except Exception as e:
+    print("Error while setting up modules:", e)
+    sys.exit(1)
+
 
 def parse_node_pfn_stats(filepath='/sys/kernel/debug/numa_folio/pfn_stats'):
     """
