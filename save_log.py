@@ -80,24 +80,41 @@ def main():
     time.sleep(0.1)
     send_pid_to_syscall(proc.pid)
 
-    print("Starting data collection. Each snapshot will be saved as a separate log file in '{}'...".format(args.log_dir))
+    print("Starting data collection. Each snapshot will be saved as separate log files for each node in '{}'...".format(args.log_dir))
     snapshot = 0
     try:
         while proc.poll() is None:
             snapshot += 1
             try:
                 with open("/sys/kernel/debug/numa_folio/folio_stats", "r") as f:
-                    data = f.read()
+                    data = f.readlines()  # 각 줄을 읽어 리스트로 저장
             except Exception as e:
                 print(f"Error reading /sys/kernel/debug/numa_folio/folio_stats: {e}")
                 break
 
-            # 저장 경로를 args.log_dir 안에 생성
-            filename = os.path.join(args.log_dir, f"folio_stats_snapshot_{snapshot}.log")
-            with open(filename, "w") as log_file:
-                log_file.write(f"Snapshot {snapshot}\n")
-                log_file.write("=" * 80 + "\n")
-                log_file.write(data)
+            # 노드별 데이터를 저장할 딕셔너리 초기화
+            node_data = {}
+
+            # 데이터를 노드별로 분리
+            for line in data:
+                try:
+                    node, pfn, source_nid, migrate_count = map(int, line.strip().split(","))
+                    if node not in node_data:
+                        node_data[node] = []
+                    node_data[node].append(line.strip())
+                except ValueError:
+                    print(f"Skipping malformed line: {line.strip()}")
+                    continue
+
+            # 노드별로 스냅샷 파일 생성
+            for node, lines in node_data.items():
+                node_dir = os.path.join(args.log_dir, f"node_{node}")
+                if not os.path.exists(node_dir):
+                    os.makedirs(node_dir)
+
+                filename = os.path.join(node_dir, f"folio_stats_snapshot_{snapshot}.log")
+                with open(filename, "w") as log_file:
+                    log_file.write("\n".join(lines) + "\n")
 
             time.sleep(args.interval)
     except KeyboardInterrupt:
