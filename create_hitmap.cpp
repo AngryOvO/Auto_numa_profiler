@@ -127,14 +127,18 @@ std::vector<std::vector<int>> build_heatmap_matrix() {
 
 // ---------------------- 히트맵 시각화 ----------------------
 void visualize_heatmap(const std::vector<std::vector<int>>& matrix) {
-    heatmap(matrix);
+    // 히트맵 생성
+    auto h = heatmap(matrix);
     colormap(palette::hot());
     xlabel("Snapshot Index");
     ylabel("PFN Index");
     title("Folio Migration Heatmap");
     colorbar();
-    show();
+    
+    // PNG 파일로 저장
+    h->save("heatmap.png");
 }
+
 
 // ---------------------- 사용법 출력 ----------------------
 void print_usage(const char* prog_name) {
