@@ -166,15 +166,16 @@ std::unordered_map<int, std::vector<std::vector<int>>> build_heatmap_matrices(co
 
 // ---------------------- 노드별 히트맵 시각화 ----------------------
 void visualize_heatmap_node(int node, const std::vector<std::vector<int>>& matrix) {
-    auto h = heatmap(matrix);
+    auto h = heatmap(matrix);  // h는 heatmap figure 객체
     colormap(palette::hot());
     xlabel("Snapshot Index");
     ylabel("PFN Index (relative to node)");
     title("Folio Migration Heatmap - Node " + std::to_string(node));
     colorbar();
     
+    // 이미지를 파일로 저장하는 부분 수정
     std::string filename = "heatmap_node_" + std::to_string(node) + ".png";
-    h->save(filename);
+    h->save(filename);  // figure 객체에 대해 save 메서드를 호출
     std::cout << "Saved heatmap for node " << node << " as " << filename << "\n";
 }
 
