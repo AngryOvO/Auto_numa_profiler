@@ -128,7 +128,7 @@ std::vector<std::vector<int>> build_heatmap_matrix() {
 // ---------------------- 히트맵 시각화 ----------------------
 void visualize_heatmap(const std::vector<std::vector<int>>& matrix) {
     heatmap(matrix);
-    colormap("hot");
+    colormap(colormap::hot());
     xlabel("Snapshot Index");
     ylabel("PFN Index");
     title("Folio Migration Heatmap");
