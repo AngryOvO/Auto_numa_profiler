@@ -1837,7 +1837,7 @@ move:
 
 					if (target_pid == current_pid) {
 						if (numa_profile_stat && numa_profile_stat[dest_nid]) {
-							numa_profile_stat[dest_nid][offset].source_pfn = pfn;
+							numa_profile_stat[dest_nid][offset].source_pfn = pfn2;
 							int new_folio_migrate_count = folio_migrate_count(dst);
 							set_migrate_count(&numa_profile_stat[dest_nid][offset], new_folio_migrate_count);
 							set_migrate_count(&numa_profile_stat[source_nid][offset2], 0);
