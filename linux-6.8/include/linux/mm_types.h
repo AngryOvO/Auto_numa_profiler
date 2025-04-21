@@ -993,7 +993,7 @@ struct mm_struct {
 // [hayong] auto numa profiling
 struct numa_folio_stat
 {
-	int source_nid;
+	unsigned long source_pfn;
 	atomic_t current_migrate_count;
 };
 

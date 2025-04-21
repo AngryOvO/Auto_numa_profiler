@@ -1837,7 +1837,7 @@ move:
 
 					if (target_pid == current_pid) {
 						if (numa_profile_stat && numa_profile_stat[dest_nid]) {
-							numa_profile_stat[dest_nid][offset].source_nid = source_nid;
+							numa_profile_stat[dest_nid][offset].source_pfn = pfn;
 							int new_folio_migrate_count = folio_migrate_count(dst);
 							set_migrate_count(&numa_profile_stat[dest_nid][offset], new_folio_migrate_count);
 							set_migrate_count(&numa_profile_stat[source_nid][offset2], 0);
@@ -2733,8 +2733,8 @@ static int numa_folio_stats_show(struct seq_file *m, void *v)
             for (unsigned long pfn = start_pfn; pfn < end_pfn; pfn++) {
                 unsigned long node_pfn = get_pfn_for_node(nid, pfn);
                 if (atomic_read(&stat[node_pfn].current_migrate_count) > 0) {
-					// current_folio_nid, currunt_folio_pfn, source_nid, current_migrate_count
-                    seq_printf(m, "%d,%lu,%d,%d\n", nid, pfn, stat[node_pfn].source_nid, atomic_read(&stat[node_pfn].current_migrate_count));
+					//currunt_folio_pfn, source_pfn, current_migrate_count
+                    seq_printf(m, "%lu,%lu,%d\n", pfn, stat[node_pfn].source_pfn, atomic_read(&stat[node_pfn].current_migrate_count));
                 }
             }
         }
