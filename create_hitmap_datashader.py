@@ -130,10 +130,11 @@ def visualize_heatmap_node_dask(node, matrix, num_threads):
     xr_da = xr.DataArray(dask_matrix)
     # Datashader로 shading 진행 (선형 보간법 사용, cmap은 필요에 따라 변경)
     shaded = tf.shade(xr_da, how="linear", cmap=["lightblue", "darkblue"])
-    # Datashader의 export_image()를 사용해 바로 PNG 파일로 저장
-    filename = f"heatmap_node_{node}"
+    # 파일명을 지정할 때, 끝에 점(.)을 추가해서 확장자가 올바르게 붙도록 함
+    filename = f"heatmap_node_{node}."
     export_image(shaded, filename=filename, fmt="png")
-    print(f"Saved heatmap for node {node} as {filename}.png")
+    print(f"Saved heatmap for node {node} as {filename}png")
+
 
 # ---------------------- 메인 함수 ----------------------
 def main():
