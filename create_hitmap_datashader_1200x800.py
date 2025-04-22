@@ -107,63 +107,55 @@ def load_logs_parallel(log_dir, num_threads):
         t = threading.Thread(target=worker, args=(i,))
         threads.append(t)
         t.start()
-
     for t in threads:
         t.join()
-
     print(f"Loaded {len(log_files)} snapshot logs.")
 
 # ---------------------- 노드별 히트맵 시각화 (1200x800 해상도로 다운샘플링 및 색상표 포함) ----------------------
 def visualize_heatmap_node_dask(node, matrix, num_threads):
     """
     NumPy 배열 matrix (nRows x num_snapshots)를 Dask 배열로 변환한 후,
-    xarray DataArray로 감싸 Datashader의 Canvas를 사용해 1200x800 해상도로 aggregation(집계)합니다.
-    이후 aggregation 결과를 matplotlib로 표시하는데,
-      - 사용자 정의 colormap (배경: 네이비, 그 후 빨간색에서 노란색으로)
-      - x, y 축 레이블 및 색상표(colorbar)를 추가하여 열화상 카메라처럼 시각화합니다.
+    xarray DataArray로 감싼 다음, Datashader의 Canvas를 사용해 1200x800 해상도로 aggregation(집계)합니다.
+    그 후 aggregation 결과를 matplotlib로 표시하며,
+      - vmin은 0으로 고정 (네이비색상),
+      - vmax는 matrix의 최대 migration count (노란색),
+      - BoundaryNorm을 통해 정수 값만 구분하는 colormap으로 설정합니다.
     """
-    # 목표 해상도 지정 (출력 이미지 픽셀 수)
     output_width = 1200
     output_height = 800
     nRows, nCols = matrix.shape
 
-    # Dask array로 변환 (청크 크기는 num_threads 기준)
+    # Dask array와 xarray DataArray 생성 및 바로 계산
     dask_matrix = da.from_array(matrix, chunks=(max(1, nRows // num_threads), nCols))
-    # xarray DataArray 생성; dims 지정: y = PFN index, x = snapshot index
     xr_da = xr.DataArray(dask_matrix, dims=["y", "x"])
-    # Dask의 lazy evaluation 해제: NumPy 배열로 변환
     computed_xr_da = xr_da.compute()
 
-    # Datashader의 Canvas 생성 (해상도 및 범위 지정)
+    # Datashader Canvas 생성 및 집계(aggregation)
     cvs = ds.Canvas(plot_width=output_width, plot_height=output_height,
                     x_range=(0, nCols), y_range=(0, nRows))
-    # 집계 수행: computed_xr_da를 이용하여 1200x800 해상도의 배열 생성
     agg = cvs.raster(computed_xr_da)
-    
-    # 열화상 카메라 스타일을 위한 사용자 정의 colormap 생성
-    # 낮은 값: navy, 중간: red, 높은 값: yellow
-    colors = ["navy", "red", "yellow"]
-    thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
 
-    # vmin과 vmax 설정 (vmin: 0, vmax: 데이터의 최대값)
+    # vmin, vmax 설정
     vmin = 0
     vmax = matrix.max()
 
-    # 정수 중심의 colormap 설정 (BoundaryNorm 사용)
-    boundaries = np.arange(vmin, vmax + 2)  # 정수 구간 경계
+    # 사용자 정의 colormap: 낮은 값은 네이비, 중간은 빨간색, 높은 값은 노란색
+    colors = ["navy", "red", "yellow"]
+    thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
+
+    # 정수 값에 맞춘 discrete한 색상 구분을 위해 BoundaryNorm 사용
+    boundaries = np.arange(vmin, vmax + 2)  # 정수 경계: vmin부터 vmax+1까지
     norm = BoundaryNorm(boundaries, ncolors=thermal_cmap.N, clip=True)
-    
-    # matplotlib를 사용해 aggregation 결과(agg.values)를 이미지로 표시
-    plt.figure(figsize=(12, 8))  # 12x8 인치, 기본 100dpi면 1200x800 픽셀에 해당
+
+    # matplotlib를 사용한 시각화: Figure 크기 12x8인치 → 1200x800 픽셀
+    plt.figure(figsize=(12, 8))
     extent = (0, nCols, 0, nRows)
-    img = plt.imshow(agg.values, cmap=thermal_cmap, norm=norm, origin="lower", extent=extent, aspect="auto",
-                     vmin=vmin, vmax=vmax)
-    
-    # x축, y축 레이블 추가
+    img = plt.imshow(agg.values, cmap=thermal_cmap, norm=norm, origin="lower",
+                     extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
     plt.xlabel("Snapshot (Time)")
     plt.ylabel("PFN")
     plt.title(f"Node {node} - Migration Heatmap")
-    # 색상바 추가 (색상바는 값의 scale을 정수로 표시)
+    # 색상바는 정수 tick만 사용하도록 설정
     cbar = plt.colorbar(img, ticks=np.arange(vmin, vmax + 1))
     cbar.set_label("Migration Count")
     plt.tight_layout()
@@ -178,14 +170,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Visualize heatmap from folio stats logs using Datashader and Dask, aggregated to 1200x800 resolution with a thermal style."
     )
-    parser.add_argument(
-        "-d", "--directory", required=True,
-        help="Directory containing log files (folio_stats_snapshot_*.log)"
-    )
-    parser.add_argument(
-        "-t", "--threads", type=int, default=1,
-        help="Number of threads to use"
-    )
+    parser.add_argument("-d", "--directory", required=True,
+                        help="Directory containing log files (folio_stats_snapshot_*.log)")
+    parser.add_argument("-t", "--threads", type=int, default=1,
+                        help="Number of threads to use")
     args = parser.parse_args()
 
     log_dir = args.directory
@@ -203,4 +191,27 @@ def main():
 
     # 2. Snapshot 로그 파일 병렬 로딩
     print(f"Loading logs from {log_dir} using {num_threads} thread(s)...")
-    load_logs_parallel(log
+    load_logs_parallel(log_dir, num_threads)
+
+    # 3. 전체 스냅샷 개수 계산 (최대 snapshot index + 1)
+    num_snapshots = max(snapshot_data.keys()) + 1 if snapshot_data else 0
+
+    # 4. 각 노드별 매트릭스 생성 및 히트맵 시각화
+    for nr in node_ranges:
+        nRows = nr.end - nr.start + 1
+        print(f"Building matrix for node {nr.node} with {nRows} rows and {num_snapshots} columns.")
+        matrix = np.zeros((nRows, num_snapshots), dtype=np.float64)
+        for snap_idx, stats in snapshot_data.items():
+            if not stats:
+                continue
+            pfns = np.array([stat.pfn for stat in stats], dtype=np.uint64)
+            counts = np.array([stat.migrate_count for stat in stats], dtype=np.float64)
+            mask = (pfns >= nr.start) & (pfns <= nr.end)
+            if np.any(mask):
+                row_indices = pfns[mask] - nr.start
+                matrix[row_indices, snap_idx] = counts[mask]
+        print(f"Aggregating and generating heatmap for node {nr.node} at 1200x800 resolution...")
+        visualize_heatmap_node_dask(nr.node, matrix, num_threads)
+
+if __name__ == "__main__":
+    main()
