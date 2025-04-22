@@ -128,28 +128,19 @@ void load_logs_parallel(const std::string& log_dir, int num_threads) {
 }
 
 // ---------------------- 노드별 히트맵 시각화 ----------------------
-void visualize_heatmap_node(int node, const std::vector<std::vector<int>>& matrix) {
-    using namespace matplot;
-
-    // int -> double로 변환 (image는 double 타입을 요구)
-    std::vector<std::vector<double>> matrix_d(matrix.size(), std::vector<double>(matrix[0].size()));
-    for (size_t i = 0; i < matrix.size(); ++i)
-        for (size_t j = 0; j < matrix[0].size(); ++j)
-            matrix_d[i][j] = static_cast<double>(matrix[i][j]);
-
-    image(matrix_d);
-    colormap(palette::hot());
+void visualize_heatmap_node(int node, const std::vector<std::vector<double>>& matrix) {
+    auto h = image(matrix);
     xlabel("Snapshot Index");
     ylabel("PFN Index (relative to node)");
     title("Folio Migration Heatmap - Node " + std::to_string(node));
     colorbar();
 
+    // 현재 Figure 핸들을 얻어서 저장합니다.
     auto fig = gcf();
     std::string filename = "heatmap_node_" + std::to_string(node) + ".png";
     fig->save(filename);
-    std::cout << "Saved image-style heatmap for node " << node << " as " << filename << "\n";
+    std::cout << "Saved heatmap for node " << node << " as " << filename << "\n";
 }
-
 
 // ---------------------- 사용법 출력 ----------------------
 void print_usage(const char* prog_name) {
@@ -227,7 +218,7 @@ int main(int argc, char* argv[]) {
                   << " with " << nRows << " rows and " << num_snapshots << " columns.\n";
 
         // 노드별 매트릭스 생성 (초기값 0)
-        std::vector<std::vector<int>> matrix(nRows, std::vector<int>(num_snapshots, 0));
+        std::vector<std::vector<double>> matrix(nRows, std::vector<double>(num_snapshots, 0.0));
 
         // 스냅샷 데이터 업데이트: 각 snapshot의 모든 stat를 순회하여, 노드 범위 내이면 해당 셀 갱신
         for (const auto &entry : snapshot_data) {
@@ -236,7 +227,7 @@ int main(int argc, char* argv[]) {
             for (const auto &stat : stats) {
                 if (stat.pfn >= nr.start && stat.pfn <= nr.end) {
                     size_t row_index = stat.pfn - nr.start;  // 상대 인덱스 계산
-                    matrix[row_index][snap_idx] = stat.migrate_count;
+                    matrix[row_index][snap_idx] = static_cast<double>(stat.migrate_count);
                 }
             }
         }
