@@ -151,7 +151,7 @@ def visualize_heatmap_node_dask(node, matrix, num_threads):
     plt.figure(figsize=(12, 8))
     extent = (0, nCols, 0, nRows)
     img = plt.imshow(agg.values, cmap=thermal_cmap, norm=norm, origin="lower",
-                     extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
+                 extent=extent, aspect="auto")
     plt.xlabel("Snapshot (Time)")
     plt.ylabel("PFN")
     plt.title(f"Node {node} - Migration Heatmap")
