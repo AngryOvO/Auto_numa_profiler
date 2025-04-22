@@ -7,10 +7,12 @@ import threading
 from dataclasses import dataclass
 import numpy as np
 
-# Datashader를 위한 임포트 (xarray도 필요)
+# Dask와 Datashader 관련 임포트
+import dask.array as da
 import xarray as xr
 import datashader.transfer_functions as tf
-from datashader.utils import export_image
+from datashader.utils import export_image  # 선택 사항, 이미지 내보내기에 활용 가능
+from PIL import Image  # Datashader 출력 PIL 이미지 활용
 
 # ---------------------- 구조체 정의 (dataclass 사용) ----------------------
 @dataclass
@@ -46,7 +48,7 @@ def load_pfn_ranges_stats(filename, node_ranges):
         m = node_pattern.search(line)
         if m:
             node = int(m.group(1))
-            i += 1  # 다음 줄: 범위 정보
+            i += 1  # 다음 줄이 범위 정보
             if i < len(lines):
                 range_line = lines[i].strip()
                 m2 = range_pattern.search(range_line)
@@ -88,9 +90,8 @@ def load_logs_parallel(log_dir, num_threads):
     pattern = re.compile(r"folio_stats_snapshot_(\d+)\.log")
     for entry in os.listdir(log_dir):
         full_path = os.path.join(log_dir, entry)
-        if os.path.isfile(full_path):
-            if pattern.fullmatch(entry):
-                log_files.append(full_path)
+        if os.path.isfile(full_path) and pattern.fullmatch(entry):
+            log_files.append(full_path)
     log_files.sort()  # 숫자에 따른 정렬
 
     def worker(tid):
@@ -112,41 +113,42 @@ def load_logs_parallel(log_dir, num_threads):
 
     print(f"Loaded {len(log_files)} snapshot logs.")
 
-# ---------------------- 노드별 히트맵 시각화 (Datashader 사용) ----------------------
-def visualize_heatmap_node(node, matrix):
+# ---------------------- 노드별 히트맵 시각화 (Datashader + Dask 사용) ----------------------
+def visualize_heatmap_node_dask(node, matrix):
     """
-    Datashader를 이용하여 heatmap을 그린 후 이미지 파일로 저장합니다.
-    matrix: NumPy 배열 (nRows x num_snapshots)
+    NumPy 배열인 matrix (nRows x num_snapshots)를 Dask 배열로 변환한 후,
+    xarray DataArray로 감싸 Datashader의 shading 함수를 호출하여 이미지를 생성합니다.
+    최종적으로 생성된 PIL 이미지를 PNG 파일로 저장합니다.
     """
-    # Datashader shade는 Xarray DataArray를 입력받을 수 있습니다.
-    da = xr.DataArray(matrix)
-    # 기본 linear shading 적용, cmap은 상황에 맞게 커스터마이징 가능
-    shaded = tf.shade(da, how="linear", cmap=["lightblue", "darkblue"])
-    # Datashader의 결과는 PIL 이미지로 변환할 수 있습니다.
-    filename = f"heatmap_node_{node}.png"
+    # Dask array로 변환 (청크 크기는 데이터 크기와 시스템 여건에 따라 조정)
+    dask_matrix = da.from_array(matrix, chunks=(max(1, matrix.shape[0] // 10), matrix.shape[1]))
+    # xarray DataArray 생성 (Dask 백엔딩)
+    xr_da = xr.DataArray(dask_matrix)
+    # Datashader로 shading 진행 (선형 보간법 사용, cmap은 필요에 따라 변경)
+    shaded = tf.shade(xr_da, how="linear", cmap=["lightblue", "darkblue"])
+    # Datashader 결과를 PIL 이미지로 변환
     pil_img = shaded.to_pil()
+    filename = f"heatmap_node_{node}.png"
     pil_img.save(filename)
     print(f"Saved heatmap for node {node} as {filename}")
 
 # ---------------------- 메인 함수 ----------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Visualize heatmap from folio stats logs using Datashader."
+        description="Visualize heatmap from folio stats logs using Datashader and Dask."
     )
     parser.add_argument(
-        "-d",
-        "--directory",
-        required=True,
-        help="Directory containing log files (folio_stats_snapshot_*.log)",
+        "-d", "--directory", required=True,
+        help="Directory containing log files (folio_stats_snapshot_*.log)"
     )
     parser.add_argument(
-        "-t", "--threads", type=int, default=1, help="Number of threads to use"
+        "-t", "--threads", type=int, default=1,
+        help="Number of threads to use"
     )
     args = parser.parse_args()
 
     log_dir = args.directory
     num_threads = args.threads
-
     pfn_stats_file = "/sys/kernel/debug/numa_folio/pfn_stats"
 
     # 1. PFN 범위(노드별) 로딩
@@ -156,7 +158,6 @@ def main():
     if not node_ranges:
         print("Error: No node ranges loaded. Exiting.")
         sys.exit(1)
-
     node_ranges.sort(key=lambda nr: nr.node)
 
     # 2. Snapshot 로그 파일 병렬 로딩
@@ -170,9 +171,10 @@ def main():
     for nr in node_ranges:
         nRows = nr.end - nr.start + 1
         print(f"Building matrix for node {nr.node} with {nRows} rows and {num_snapshots} columns.")
+        # NumPy 배열 할당 (행: PFN 범위 길이, 열: 스냅샷 수)
         matrix = np.zeros((nRows, num_snapshots), dtype=np.float64)
 
-        # snapshot_data의 각 snapshot에 대해 vectorized 처리
+        # 각 스냅샷에 대한 데이터를 vectorized하게 업데이트
         for snap_idx, stats in snapshot_data.items():
             if not stats:
                 continue
@@ -183,7 +185,7 @@ def main():
                 row_indices = pfns[mask] - nr.start
                 matrix[row_indices, snap_idx] = counts[mask]
         print(f"Generating heatmap for node {nr.node}...")
-        visualize_heatmap_node(nr.node, matrix)
+        visualize_heatmap_node_dask(nr.node, matrix)
 
 if __name__ == "__main__":
     main()
