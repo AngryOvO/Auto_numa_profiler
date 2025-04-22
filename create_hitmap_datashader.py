@@ -114,23 +114,29 @@ def load_logs_parallel(log_dir, num_threads):
     print(f"Loaded {len(log_files)} snapshot logs.")
 
 # ---------------------- 노드별 히트맵 시각화 (Datashader + Dask 사용) ----------------------
-def visualize_heatmap_node_dask(node, matrix):
+def visualize_heatmap_node_dask(node, matrix, num_threads):
     """
     NumPy 배열인 matrix (nRows x num_snapshots)를 Dask 배열로 변환한 후,
     xarray DataArray로 감싸 Datashader의 shading 함수를 호출하여 이미지를 생성합니다.
     최종적으로 생성된 PIL 이미지를 PNG 파일로 저장합니다.
+    
+    여기서는 동적으로 청크 크기를 조정합니다.
+    사용자가 지정한 num_threads 값에 따라, 전체 행을 num_threads 만큼의 청크로 나눕니다.
     """
-    # Dask array로 변환 (청크 크기는 데이터 크기와 시스템 여건에 따라 조정)
-    dask_matrix = da.from_array(matrix, chunks=(max(1, matrix.shape[0] // 10), matrix.shape[1]))
+    # 전체 행 수를 num_threads로 나눠서 각 청크의 행(row) 수를 결정
+    chunk_rows = max(1, matrix.shape[0] // num_threads)
+    # Dask array로 변환: 첫 번째 차원은 동적으로 결정한 chunk_rows, 두 번째 차원은 전체 열
+    dask_matrix = da.from_array(matrix, chunks=(chunk_rows, matrix.shape[1]))
     # xarray DataArray 생성 (Dask 백엔딩)
     xr_da = xr.DataArray(dask_matrix)
     # Datashader로 shading 진행 (선형 보간법 사용, cmap은 필요에 따라 변경)
     shaded = tf.shade(xr_da, how="linear", cmap=["lightblue", "darkblue"])
-    # Datashader 결과를 PIL 이미지로 변환
+    # Datashader 결과를 PIL 이미지로 변환하여 파일로 저장
     pil_img = shaded.to_pil()
     filename = f"heatmap_node_{node}.png"
     pil_img.save(filename)
     print(f"Saved heatmap for node {node} as {filename}")
+
 
 # ---------------------- 메인 함수 ----------------------
 def main():
@@ -185,7 +191,7 @@ def main():
                 row_indices = pfns[mask] - nr.start
                 matrix[row_indices, snap_idx] = counts[mask]
         print(f"Generating heatmap for node {nr.node}...")
-        visualize_heatmap_node_dask(nr.node, matrix)
+        visualize_heatmap_node_dask(nr.node, matrix, num_threads)
 
 if __name__ == "__main__":
     main()
