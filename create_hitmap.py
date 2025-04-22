@@ -71,12 +71,13 @@ def parse_log_file(filepath, snapshot_index):
                 tokens = [token.strip() for token in line.split(",")]
                 if len(tokens) == 3:
                     try:
+                        # 각 토큰을 정수형으로 변환하여 FolioStat 객체 생성
                         pfn = int(tokens[0])
                         source_pfn = int(tokens[1])
                         migrate_count = int(tokens[2])
                         stats.append(FolioStat(pfn=pfn, source_pfn=source_pfn, migrate_count=migrate_count))
                     except Exception as e:
-                        # 파싱 오류가 발생하면 무시합니다.
+                        # 파싱 오류 발생 시 해당 라인은 무시
                         pass
         snapshot_data[snapshot_index] = stats
     except Exception as e:
@@ -90,7 +91,6 @@ def load_logs_parallel(log_dir, num_threads):
     for entry in os.listdir(log_dir):
         full_path = os.path.join(log_dir, entry)
         if os.path.isfile(full_path):
-            # 파일명이 정확히 패턴과 일치하는지 확인
             if pattern.fullmatch(entry):
                 log_files.append(full_path)
     log_files.sort()  # 알파벳 순 정렬 (파일명에 숫자가 포함되어 있다면 올바른 순서여야 함)
@@ -118,9 +118,8 @@ def load_logs_parallel(log_dir, num_threads):
 # ---------------------- 노드별 히트맵 시각화 ----------------------
 def visualize_heatmap_node(node, matrix):
     plt.figure()
-    np_matrix = np.array(matrix)
-    # imshow 함수를 사용하면 heatmap을 생성할 수 있습니다.
-    plt.imshow(np_matrix, aspect="auto", origin="lower")
+    # 이미 matrix는 NumPy 배열이므로 np.array() 호출은 생략할 수 있음
+    plt.imshow(matrix, aspect="auto", origin="lower")
     plt.xlabel("Snapshot Index")
     plt.ylabel("PFN Index (relative to node)")
     plt.title(f"Folio Migration Heatmap - Node {node}")
@@ -167,26 +166,29 @@ def main():
     load_logs_parallel(log_dir, num_threads)
 
     # 3. 전체 스냅샷 개수 계산 (최대 snapshot index + 1)
-    if snapshot_data:
-        num_snapshots = max(snapshot_data.keys()) + 1
-    else:
-        num_snapshots = 0
+    num_snapshots = max(snapshot_data.keys()) + 1 if snapshot_data else 0
 
-    # 4. 각 노드별 매트릭스 생성 및 히트맵 시각화
+    # 4. 각 노드별 매트릭스 생성 (NumPy 배열 사용) 및 히트맵 시각화
     for nr in node_ranges:
         nRows = nr.end - nr.start + 1
         print(f"Building matrix for node {nr.node} with {nRows} rows and {num_snapshots} columns.")
-        # 노드별 매트릭스를 0으로 초기화 (행: PFN 범위 길이, 열: 전체 스냅샷 개수)
-        matrix = [[0.0 for _ in range(num_snapshots)] for _ in range(nRows)]
+        # NumPy를 사용하여 연속된 메모리 공간에 0으로 초기화된 행렬 생성
+        matrix = np.zeros((nRows, num_snapshots), dtype=np.float64)
 
-        # 모든 스냅샷 데이터를 순회하며, 노드 범위 내의 값 업데이트
+        # snapshot_data의 각 snapshot에 대해 vectorized하게 처리
         for snap_idx, stats in snapshot_data.items():
-            for stat in stats:
-                if nr.start <= stat.pfn <= nr.end:
-                    row_index = stat.pfn - nr.start  # 상대 인덱스
-                    if snap_idx < num_snapshots:
-                        matrix[row_index][snap_idx] = float(stat.migrate_count)
-
+            if not stats: 
+                continue
+            # 각 snapshot의 PFN과 migrate_count를 NumPy 배열로 변환
+            pfns = np.array([stat.pfn for stat in stats], dtype=np.uint64)
+            counts = np.array([stat.migrate_count for stat in stats], dtype=np.float64)
+            # 현재 노드의 범위 내에 있는 인덱스를 mask로 구함
+            mask = (pfns >= nr.start) & (pfns <= nr.end)
+            if np.any(mask):
+                # 해당 스냅샷에서 조건을 만족하는 PFN값들의 상대 인덱스를 계산
+                row_indices = pfns[mask] - nr.start
+                # vectorized 업데이트: 각 row_indices에 대해 해당 snapshot 열에 migrate_count 업데이트
+                matrix[row_indices, snap_idx] = counts[mask]
         print(f"Visualizing heatmap for node {nr.node}...")
         visualize_heatmap_node(nr.node, matrix)
 
