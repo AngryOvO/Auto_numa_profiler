@@ -143,7 +143,7 @@ void visualize_heatmap_node(int node, const std::vector<std::vector<double>>& ma
 
     // 현재 Figure 핸들을 얻어서 저장합니다.
     std::string filename = "heatmap_node_" + std::to_string(node) + ".png";
-    h->save(filename);
+    save(filename);
     std::cout << "Saved heatmap for node " << node << " as " << filename << "\n";
 }
 
