@@ -128,7 +128,13 @@ void load_logs_parallel(const std::string& log_dir, int num_threads) {
 }
 
 // ---------------------- 노드별 히트맵 시각화 ----------------------
+#include <cstdlib>  // for setenv
+
 void visualize_heatmap_node(int node, const std::vector<std::vector<double>>& matrix) {
+    // Qt 그래픽 비활성화 (헤드리스 모드)
+    setenv("QT_QPA_PLATFORM", "offscreen", 1);
+
+    using namespace matplot;
     auto h = image(matrix);
     xlabel("Snapshot Index");
     ylabel("PFN Index (relative to node)");
@@ -141,6 +147,7 @@ void visualize_heatmap_node(int node, const std::vector<std::vector<double>>& ma
     fig->save(filename);
     std::cout << "Saved heatmap for node " << node << " as " << filename << "\n";
 }
+
 
 // ---------------------- 사용법 출력 ----------------------
 void print_usage(const char* prog_name) {
