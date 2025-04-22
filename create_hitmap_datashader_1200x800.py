@@ -116,32 +116,34 @@ def load_logs_parallel(log_dir, num_threads):
 # ---------------------- 노드별 히트맵 시각화 (1200x800 해상도로 다운샘플링) ----------------------
 def visualize_heatmap_node_dask(node, matrix, num_threads):
     """
-    NumPy 배열 matrix (nRows x num_snapshots)를 dask array로 변환한 후,
-    xarray DataArray로 감싸 Datashader의 Canvas를 사용하여 1200x800 해상도로 aggregation(집계)합니다.
-    그 후 shading을 하고 export_image()를 사용해 PNG 파일로 저장합니다.
+    NumPy 배열 matrix (nRows x num_snapshots)를 Dask 배열로 변환한 후,
+    xarray DataArray로 감싼 다음, Datashader의 Canvas를 사용해 1200x800 해상도로 집계(aggregation)합니다.
+    그 후 shading과 export_image()를 통해 PNG 파일로 저장합니다.
     """
-    # 목표 해상도 지정 (출력 이미지 픽셀 수)
     output_width = 1200
     output_height = 800
     nRows, nCols = matrix.shape
 
-    # 데이터를 효율적으로 처리하기 위해 dask array로 변환 (청크 크기는 num_threads를 이용)
+    # Dask array로 변환 (청크 크기는 행은 num_threads에 따라 분할)
     dask_matrix = da.from_array(matrix, chunks=(max(1, nRows // num_threads), nCols))
-    # xarray DataArray 생성; dims를 ["y", "x"]로 지정하면 y: PFN index, x: snapshot index
+    # xarray DataArray 생성 (dims 지정: y = PFN index, x = snapshot index)
     xr_da = xr.DataArray(dask_matrix, dims=["y", "x"])
+    
+    # 여기서 .compute()를 호출하여 Dask 배열을 실질적인 NumPy 배열로 만듭니다.
+    computed_xr_da = xr_da.compute()
 
-    # Datashader의 Canvas를 생성하여 출력 해상도와 범위 지정
+    # Datashader의 Canvas를 생성 (1200x800 해상도 및 범위 지정)
     cvs = ds.Canvas(plot_width=output_width, plot_height=output_height,
                     x_range=(0, nCols), y_range=(0, nRows))
-    # raster()를 사용해 원본 데이터를 1200x800 해상도로 aggregation합니다.
-    agg = cvs.raster(xr_da)
-    # shading: aggregation된 값을 색상으로 매핑 (여기서는 선형 보간법 사용)
+    # aggregation 수행: computed_xr_da를 사용합니다.
+    agg = cvs.raster(computed_xr_da)
     shaded = tf.shade(agg, how="linear", cmap=["lightblue", "darkblue"])
-    # export_image를 사용하여 바로 PNG 파일로 저장.
-    # fmt에 선행 점을 포함하여 최종 파일명이 "heatmap_node_{node}.png"가 되도록 함.
+    
+    # export_image() 사용: 파일명은 "heatmap_node_{node}.png"
     filename = f"heatmap_node_{node}"
     export_image(shaded, filename=filename, fmt=".png")
     print(f"Saved aggregated heatmap for node {node} as {filename}.png")
+
 
 # ---------------------- 메인 함수 ----------------------
 def main():
