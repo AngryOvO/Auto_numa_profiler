@@ -135,16 +135,15 @@ void visualize_heatmap_node(int node, const std::vector<std::vector<double>>& ma
     setenv("QT_QPA_PLATFORM", "offscreen", 1);
 
     using namespace matplot;
-    auto h = image(matrix);
+    auto h = image(matrix, true);
     xlabel("Snapshot Index");
     ylabel("PFN Index (relative to node)");
     title("Folio Migration Heatmap - Node " + std::to_string(node));
     colorbar();
 
     // 현재 Figure 핸들을 얻어서 저장합니다.
-    auto fig = gcf();
     std::string filename = "heatmap_node_" + std::to_string(node) + ".png";
-    fig->save(filename);
+    h->save(filename);
     std::cout << "Saved heatmap for node " << node << " as " << filename << "\n";
 }
 
