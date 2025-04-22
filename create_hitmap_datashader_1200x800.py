@@ -10,9 +10,10 @@ import numpy as np
 # Dask와 Datashader 관련 임포트
 import dask.array as da
 import xarray as xr
-import datashader.transfer_functions as tf
-from datashader.utils import export_image
-import datashader as ds  # Canvas를 사용하기 위해 추가
+import datashader as ds
+from matplotlib.colors import LinearSegmentedColormap
+import matplotlib.pyplot as plt
+#import datashader.transfer_functions as tf  # 사용하지 않고 aggregation값을 직접 이용
 
 # ---------------------- 구조체 정의 (dataclass 사용) ----------------------
 @dataclass
@@ -113,42 +114,60 @@ def load_logs_parallel(log_dir, num_threads):
 
     print(f"Loaded {len(log_files)} snapshot logs.")
 
-# ---------------------- 노드별 히트맵 시각화 (1200x800 해상도로 다운샘플링) ----------------------
+# ---------------------- 노드별 히트맵 시각화 (1200x800 해상도로 다운샘플링 및 색상표 포함) ----------------------
 def visualize_heatmap_node_dask(node, matrix, num_threads):
     """
     NumPy 배열 matrix (nRows x num_snapshots)를 Dask 배열로 변환한 후,
-    xarray DataArray로 감싼 다음, Datashader의 Canvas를 사용해 1200x800 해상도로 집계(aggregation)합니다.
-    그 후 shading과 export_image()를 통해 PNG 파일로 저장합니다.
+    xarray DataArray로 감싼 다음, Datashader의 Canvas를 사용해 1200x800 해상도로 aggregation(집계)합니다.
+    이후 aggregation 결과를 matplotlib로 표시하는데,
+      - 사용자 정의 colormap (배경: 네이비, 그 후 빨간색에서 노란색으로)
+      - x, y 축 레이블 및 색상표(colorbar)를 추가하여 열화상 카메라처럼 시각화합니다.
     """
+    # 목표 해상도 지정 (출력 이미지 픽셀 수)
     output_width = 1200
     output_height = 800
     nRows, nCols = matrix.shape
 
-    # Dask array로 변환 (청크 크기는 행은 num_threads에 따라 분할)
+    # Dask array로 변환 (청크 크기는 num_threads 기준)
     dask_matrix = da.from_array(matrix, chunks=(max(1, nRows // num_threads), nCols))
-    # xarray DataArray 생성 (dims 지정: y = PFN index, x = snapshot index)
+    # xarray DataArray 생성; dims 지정: y = PFN index, x = snapshot index
     xr_da = xr.DataArray(dask_matrix, dims=["y", "x"])
-    
-    # 여기서 .compute()를 호출하여 Dask 배열을 실질적인 NumPy 배열로 만듭니다.
+    # Dask의 lazy evaluation 해제: NumPy 배열로 변환
     computed_xr_da = xr_da.compute()
 
-    # Datashader의 Canvas를 생성 (1200x800 해상도 및 범위 지정)
+    # Datashader의 Canvas 생성 (해상도 및 범위 지정)
     cvs = ds.Canvas(plot_width=output_width, plot_height=output_height,
                     x_range=(0, nCols), y_range=(0, nRows))
-    # aggregation 수행: computed_xr_da를 사용합니다.
+    # 집계 수행: computed_xr_da를 이용하여 1200x800 해상도의 배열 생성
     agg = cvs.raster(computed_xr_da)
-    shaded = tf.shade(agg, how="linear", cmap=["lightblue", "darkblue"])
     
-    # export_image() 사용: 파일명은 "heatmap_node_{node}.png"
-    filename = f"heatmap_node_{node}"
-    export_image(shaded, filename=filename, fmt=".png")
-    print(f"Saved aggregated heatmap for node {node} as {filename}.png")
-
+    # 열화상 카메라 스타일을 위한 사용자 정의 colormap 생성
+    # 낮은 값: navy, 중간: red, 높은 값: yellow
+    colors = ["navy", "red", "yellow"]
+    thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
+    
+    # matplotlib를 사용해 aggregation 결과(agg.values)를 이미지로 표시
+    plt.figure(figsize=(12, 8))  # 12x8 인치, 기본 100dpi면 1200x800 픽셀에 해당
+    extent = (0, nCols, 0, nRows)
+    img = plt.imshow(agg.values, cmap=thermal_cmap, origin="lower", extent=extent, aspect="auto")
+    
+    # x축, y축 레이블 추가
+    plt.xlabel("Snapshot (Time)")
+    plt.ylabel("PFN")
+    plt.title(f"Node {node} - Migration Heatmap")
+    # 색상바 추가 (색상바는 값의 scale을 보여줌)
+    plt.colorbar(img, label="Migration Count")
+    plt.tight_layout()
+    
+    filename = f"heatmap_node_{node}.png"
+    plt.savefig(filename)
+    plt.close()
+    print(f"Saved aggregated heatmap for node {node} as {filename}")
 
 # ---------------------- 메인 함수 ----------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Visualize heatmap from folio stats logs using Datashader and Dask, aggregated to 1200x800 resolution."
+        description="Visualize heatmap from folio stats logs using Datashader and Dask, aggregated to 1200x800 resolution with a thermal style."
     )
     parser.add_argument(
         "-d", "--directory", required=True,
@@ -187,7 +206,7 @@ def main():
         # NumPy 배열 생성 (행: PFN 범위 길이, 열: 스냅샷 수)
         matrix = np.zeros((nRows, num_snapshots), dtype=np.float64)
 
-        # 각 스냅샷의 데이터를 vectorized하게 업데이트
+        # 각 스냅샷에 대한 데이터를 vectorized하게 업데이트
         for snap_idx, stats in snapshot_data.items():
             if not stats:
                 continue
