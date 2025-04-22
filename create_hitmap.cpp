@@ -129,19 +129,27 @@ void load_logs_parallel(const std::string& log_dir, int num_threads) {
 
 // ---------------------- 노드별 히트맵 시각화 ----------------------
 void visualize_heatmap_node(int node, const std::vector<std::vector<int>>& matrix) {
-    auto h = heatmap(matrix);
+    using namespace matplot;
+
+    // int -> double로 변환 (image는 double 타입을 요구)
+    std::vector<std::vector<double>> matrix_d(matrix.size(), std::vector<double>(matrix[0].size()));
+    for (size_t i = 0; i < matrix.size(); ++i)
+        for (size_t j = 0; j < matrix[0].size(); ++j)
+            matrix_d[i][j] = static_cast<double>(matrix[i][j]);
+
+    image(matrix_d);
     colormap(palette::hot());
     xlabel("Snapshot Index");
     ylabel("PFN Index (relative to node)");
     title("Folio Migration Heatmap - Node " + std::to_string(node));
     colorbar();
 
-    // 현재 Figure 핸들을 얻어서 저장합니다.
     auto fig = gcf();
     std::string filename = "heatmap_node_" + std::to_string(node) + ".png";
     fig->save(filename);
-    std::cout << "Saved heatmap for node " << node << " as " << filename << "\n";
+    std::cout << "Saved image-style heatmap for node " << node << " as " << filename << "\n";
 }
+
 
 // ---------------------- 사용법 출력 ----------------------
 void print_usage(const char* prog_name) {
