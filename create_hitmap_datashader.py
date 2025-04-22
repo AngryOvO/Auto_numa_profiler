@@ -11,8 +11,7 @@ import numpy as np
 import dask.array as da
 import xarray as xr
 import datashader.transfer_functions as tf
-from datashader.utils import export_image  # 선택 사항, 이미지 내보내기에 활용 가능
-from PIL import Image  # Datashader 출력 PIL 이미지 활용
+from datashader.utils import export_image
 
 # ---------------------- 구조체 정의 (dataclass 사용) ----------------------
 @dataclass
@@ -118,7 +117,7 @@ def visualize_heatmap_node_dask(node, matrix, num_threads):
     """
     NumPy 배열인 matrix (nRows x num_snapshots)를 Dask 배열로 변환한 후,
     xarray DataArray로 감싸 Datashader의 shading 함수를 호출하여 이미지를 생성합니다.
-    최종적으로 생성된 PIL 이미지를 PNG 파일로 저장합니다.
+    최종적으로 Datashader의 export_image()를 사용해 PNG 파일로 저장합니다.
     
     여기서는 동적으로 청크 크기를 조정합니다.
     사용자가 지정한 num_threads 값에 따라, 전체 행을 num_threads 만큼의 청크로 나눕니다.
@@ -131,12 +130,10 @@ def visualize_heatmap_node_dask(node, matrix, num_threads):
     xr_da = xr.DataArray(dask_matrix)
     # Datashader로 shading 진행 (선형 보간법 사용, cmap은 필요에 따라 변경)
     shaded = tf.shade(xr_da, how="linear", cmap=["lightblue", "darkblue"])
-    # Datashader 결과를 PIL 이미지로 변환하여 파일로 저장
-    pil_img = shaded.to_pil()
-    filename = f"heatmap_node_{node}.png"
-    pil_img.save(filename)
-    print(f"Saved heatmap for node {node} as {filename}")
-
+    # Datashader의 export_image()를 사용해 바로 PNG 파일로 저장
+    filename = f"heatmap_node_{node}"
+    export_image(shaded, filename=filename, fmt="png")
+    print(f"Saved heatmap for node {node} as {filename}.png")
 
 # ---------------------- 메인 함수 ----------------------
 def main():
