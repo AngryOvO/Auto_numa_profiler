@@ -80,7 +80,7 @@ def load_logs_parallel(log_dir, num_threads):
 
     for entry in os.scandir(log_dir):
         if entry.is_file() and pattern.match(entry.name):
-            log_files.append(entry.path())
+            log_files.append(entry.path)  # 수정된 부분: entry.path() -> entry.path
 
     log_files.sort()  # 시간 순 정렬
 
@@ -97,6 +97,7 @@ def load_logs_parallel(log_dir, num_threads):
             executor.submit(worker, i)
 
     print(f"Loaded {len(log_files)} snapshot logs.")
+
 
 
 # ---------------------- 노드별 히트맵 시각화 ----------------------
