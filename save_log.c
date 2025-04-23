@@ -30,11 +30,32 @@ void send_pid_to_syscall(pid_t pid) {
 }
 
 void create_directory(const char *path) {
-    if (mkdir(path, 0755) < 0 && errno != EEXIST) {
-        perror("Error creating directory");
-        exit(EXIT_FAILURE);
+    struct dirent *entry;
+    DIR *dir = opendir(path);
+
+    if (dir) {
+        // 디렉토리가 존재하면 .log 파일 모두 삭제
+        while ((entry = readdir(dir)) != NULL) {
+            if (strstr(entry->d_name, ".log")) {
+                char filepath[512];
+                snprintf(filepath, sizeof(filepath), "%s/%s", path, entry->d_name);
+                if (unlink(filepath) < 0) {
+                    perror("Error deleting old log file");
+                } else {
+                    printf("Deleted old log file: %s\n", filepath);
+                }
+            }
+        }
+        closedir(dir);
+    } else {
+        // 디렉토리가 없으면 새로 생성
+        if (mkdir(path, 0755) < 0 && errno != EEXIST) {
+            perror("Error creating directory");
+            exit(EXIT_FAILURE);
+        }
     }
 }
+
 
 void collect_data(const char *log_dir, pid_t workload_pid) {
     char buffer[65536]; // 64KB 버퍼
