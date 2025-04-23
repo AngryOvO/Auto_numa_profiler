@@ -1,11 +1,10 @@
 // log_parser.cpp
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <pybind11/numpy.h>
 
 #include <filesystem>
 #include <fstream>
-#include <sstream>
-#include <regex>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -13,37 +12,63 @@
 #include <algorithm>
 #include <thread>
 #include <mutex>
+#include <atomic>
 
 namespace py = pybind11;
 namespace fs = std::filesystem;
 
-// SnapshotMap: key는 snapshot index, value는 (pfn, source_pfn, migrate_count) 튜플의 벡터
-using SnapshotMap = std::unordered_map<int, std::vector<std::tuple<int, int, int>>>;
+// 각 레코드는 (pfn, source_pfn, migrate_count) 3개의 int 값을 가짐
+using Record = std::tuple<int, int, int>;
+using SnapshotMap = std::unordered_map<int, std::vector<Record>>;
 
-SnapshotMap parse_logs(const std::string &log_dir, int num_threads) {
-    // 1. 로그 파일 목록 수집
+// 직접 문자열 파싱: "pfn, source_pfn, migrate_count" 형식
+bool parse_line(const std::string &line, int &pfn, int &source_pfn, int &migrate_count) {
+    size_t pos1 = line.find(',');
+    if (pos1 == std::string::npos)
+        return false;
+    size_t pos2 = line.find(',', pos1 + 1);
+    if (pos2 == std::string::npos)
+        return false;
+    try {
+        pfn = std::stoi(line.substr(0, pos1));
+        source_pfn = std::stoi(line.substr(pos1 + 1, pos2 - pos1 - 1));
+        migrate_count = std::stoi(line.substr(pos2 + 1));
+    } catch (...) {
+        return false;
+    }
+    return true;
+}
+
+py::dict parse_logs_numpy(const std::string &log_dir, int num_threads) {
+    // 1. 로그 파일 목록 수집 (파일명이 "folio_stats_snapshot_*.log")
     std::vector<fs::path> log_files;
     for (const auto &entry : fs::directory_iterator(log_dir)) {
         if (entry.is_regular_file()) {
             std::string filename = entry.path().filename().string();
-            // 파일명이 "folio_stats_snapshot_"로 시작하고 ".log" 확장자인지 확인
-            if (filename.rfind("folio_stats_snapshot_", 0) == 0 && entry.path().extension() == ".log") {
+            if (filename.rfind("folio_stats_snapshot_", 0) == 0 &&
+                entry.path().extension() == ".log") {
                 log_files.push_back(entry.path());
             }
         }
     }
     std::sort(log_files.begin(), log_files.end());
 
-    SnapshotMap result;
+    // 전역 결과 맵과 동기화를 위한 변수들
+    SnapshotMap global_result;
     std::mutex result_mutex;
-    std::regex pattern(R"((\d+),\s*(\d+),\s*(\d+))");
+    std::atomic<size_t> file_index(0);
+    const size_t total_files = log_files.size();
 
-    // worker lambda: [start, end) 범위의 파일들을 파싱
-    auto worker = [&](int start, int end) {
-        for (int i = start; i < end; i++) {
-            const auto &file_path = log_files[i];
-            // 파일 이름에서 snapshot index 추출 
-            // 예: "folio_stats_snapshot_42.log" → snapshot index = 42
+    // worker 스레드는 원자적 인덱스를 통해 남은 파일을 동적으로 가져갑니다.
+    auto worker = [&]() {
+        SnapshotMap local_result;
+        while (true) {
+            size_t i = file_index.fetch_add(1);
+            if (i >= total_files)
+                break;
+            const fs::path &file_path = log_files[i];
+
+            // 파일명에서 snapshot index 추출 (예: "folio_stats_snapshot_42.log")
             std::string fname = file_path.filename().string();
             int snapshot_idx = 0;
             try {
@@ -52,55 +77,71 @@ SnapshotMap parse_logs(const std::string &log_dir, int num_threads) {
                 std::string num_str = fname.substr(prefix_len, pos - prefix_len);
                 snapshot_idx = std::stoi(num_str);
             } catch (...) {
-                continue;  // 변환에 실패하면 건너뜁니다.
+                continue;
             }
+
             std::ifstream infile(file_path);
             if (!infile.is_open())
                 continue;
-            std::vector<std::tuple<int, int, int>> stats;
+            std::vector<Record> records;
             std::string line;
             while (std::getline(infile, line)) {
                 if (line.empty())
                     continue;
-                std::smatch match;
-                if (std::regex_search(line, match, pattern)) {
-                    int pfn = std::stoi(match[1].str());
-                    int source_pfn = std::stoi(match[2].str());
-                    int migrate_count = std::stoi(match[3].str());
-                    stats.push_back(std::make_tuple(pfn, source_pfn, migrate_count));
-                }
+                int pfn, source_pfn, migrate_count;
+                if (parse_line(line, pfn, source_pfn, migrate_count))
+                    records.push_back(std::make_tuple(pfn, source_pfn, migrate_count));
             }
-            {
-                std::lock_guard<std::mutex> lock(result_mutex);
-                result[snapshot_idx] = stats;
+            local_result[snapshot_idx] = std::move(records);
+        }
+        // 로컬 결과를 전역 결과에 병합. 동일 인덱스가 있으면 벡터를 합칩니다.
+        if (!local_result.empty()) {
+            std::lock_guard<std::mutex> lock(result_mutex);
+            for (auto &pair : local_result) {
+                auto it = global_result.find(pair.first);
+                if (it != global_result.end()) {
+                    it->second.insert(it->second.end(), 
+                        std::make_move_iterator(pair.second.begin()),
+                        std::make_move_iterator(pair.second.end()));
+                } else {
+                    global_result.insert(std::move(pair));
+                }
             }
         }
     };
 
-    // 2. 파일들을 num_threads 개의 그룹으로 분할하여 worker 스레드 생성
-    int total_files = log_files.size();
-    if (num_threads < 1) {
+    if (num_threads < 1)
         num_threads = 1;
-    }
-    int files_per_thread = total_files / num_threads;
-    int remainder = total_files % num_threads;
     std::vector<std::thread> threads;
-    int start_index = 0;
     for (int t = 0; t < num_threads; t++) {
-        int count = files_per_thread + (t < remainder ? 1 : 0);
-        int end_index = start_index + count;
-        threads.emplace_back(worker, start_index, end_index);
-        start_index = end_index;
+        threads.emplace_back(worker);
     }
-    for (auto &th : threads) {
+    for (auto &th : threads)
         th.join();
+
+    // 결과를 파이썬 dict로 변환하면서, 각 스냅샷의 데이터는 NumPy 배열로 생성합니다.
+    py::dict py_result;
+    for (const auto &item : global_result) {
+        int snapshot_idx = item.first;
+        const auto &records = item.second;
+        ssize_t num_records = records.size();
+        // NumPy 배열 생성 (형상: [num_records, 3])
+        py::array_t<int> arr({num_records, 3});
+        auto r = arr.mutable_unchecked<2>();  // 빠른 인덱싱을 위한 unchecked 접근자
+        for (ssize_t i = 0; i < num_records; i++) {
+            r(i, 0) = std::get<0>(records[i]);
+            r(i, 1) = std::get<1>(records[i]);
+            r(i, 2) = std::get<2>(records[i]);
+        }
+        py_result[py::int_(snapshot_idx)] = arr;
     }
-    return result;
+    return py_result;
 }
 
 PYBIND11_MODULE(log_parser, m) {
-    m.doc() = "Module for multithreaded log file parsing using C++ and pybind11";
-    m.def("parse_logs", &parse_logs,
-          "Parse snapshot log files from a given directory using multithreading",
+    m.doc() = "Optimized log parser returning numpy arrays directly";
+    m.def("parse_logs_numpy", &parse_logs_numpy,
+          "Parse snapshot log files and return a dict mapping snapshot index to numpy arrays.\n"
+          "Each numpy array has shape (num_records, 3) representing (pfn, source_pfn, migrate_count).",
           py::arg("log_dir"), py::arg("num_threads") = 4);
 }

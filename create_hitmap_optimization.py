@@ -67,13 +67,15 @@ def load_pfn_ranges_stats(filename, node_ranges):
 # ---------------------- C++ 확장 모듈을 사용한 로그 파싱 ----------------------
 def load_snapshot_data_fast(log_dir, num_threads):
     global snapshot_data
-    print(f"Using C++ extension to parse logs in {log_dir} with {num_threads} threads...")
-    # C++ 모듈의 parse_logs 함수는 딕셔너리: {snapshot_index: [(pfn, source_pfn, migrate_count), ...], ...}
-    data = log_parser.parse_logs(log_dir, num_threads)
+    print(f"Using C++ extension (numpy) to parse logs in {log_dir} with {num_threads} threads...")
+    # 이제 parse_logs_numpy를 사용합니다.
+    data = log_parser.parse_logs_numpy(log_dir, num_threads)
     snapshot_data = {}
-    for snap, lst in data.items():
-        snapshot_data[snap] = [FolioStat(pfn, source_pfn, migrate_count) for (pfn, source_pfn, migrate_count) in lst]
-    print(f"Loaded snapshot data for {len(snapshot_data)} snapshots (C++).")
+    for snap, arr in data.items():
+        # arr는 (N, 3) numpy array입니다. 리스트로 변환한 후 FolioStat 객체 생성
+        snapshot_data[snap] = [FolioStat(p, sp, m) for (p, sp, m) in arr.tolist()]
+    print(f"Loaded snapshot data for {len(snapshot_data)} snapshots (C++ numpy).")
+
 
 # ---------------------- 노드별 히트맵 시각화 (1200x800 해상도로 다운샘플링 및 색상표 포함) ----------------------
 def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax):
