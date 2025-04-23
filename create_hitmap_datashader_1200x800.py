@@ -11,7 +11,7 @@ import numpy as np
 import dask.array as da
 import xarray as xr
 import datashader as ds
-from matplotlib.colors import LinearSegmentedColormap, BoundaryNorm
+from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 
 # ---------------------- 구조체 정의 (dataclass 사용) ----------------------
@@ -112,50 +112,52 @@ def load_logs_parallel(log_dir, num_threads):
     print(f"Loaded {len(log_files)} snapshot logs.")
 
 # ---------------------- 노드별 히트맵 시각화 (1200x800 해상도로 다운샘플링 및 색상표 포함) ----------------------
-def visualize_heatmap_node_dask(node, matrix, num_threads):
+def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax):
     """
-    NumPy 배열 matrix (nRows x num_snapshots)를 Dask 배열로 변환한 후,
-    xarray DataArray로 감싼 다음, Datashader의 Canvas를 사용해 1200x800 해상도로 aggregation(집계)합니다.
-    그 후 aggregation 결과를 matplotlib로 표시하며,
-      - vmin은 0으로 고정 (네이비색상),
-      - vmax는 matrix의 최대 migration count (노란색),
-      - BoundaryNorm을 통해 정수 값만 구분하는 colormap으로 설정합니다.
+    nr: NodeRange 객체 (노드 번호와 해당 노드의 PFN 범위)
+    matrix: 해당 노드의 NumPy 배열 (nRows x num_snapshots)
+    num_threads: 사용 스레드 수
+    global_vmax: 모든 노드에서의 최대 migration count (모든 히트맵에 동일하게 적용)
+    
+    - Datashader의 Canvas로 1200x800 해상도로 aggregation한 후,
+      vmin은 0 (네이비), vmax는 global_vmax (노란색)로 지정하여 navy→red→yellow가 연속적으로 표현되도록 합니다.
+    - y축에는 노드의 PFN 범위 시작과 종료 값만 표시합니다.
     """
+    node = nr.node
     output_width = 1200
     output_height = 800
     nRows, nCols = matrix.shape
 
-    # Dask array와 xarray DataArray 생성 및 바로 계산
+    # Dask array 변환 및 xarray DataArray 생성 후 계산
     dask_matrix = da.from_array(matrix, chunks=(max(1, nRows // num_threads), nCols))
     xr_da = xr.DataArray(dask_matrix, dims=["y", "x"])
     computed_xr_da = xr_da.compute()
 
-    # Datashader Canvas 생성 및 집계(aggregation)
+    # Datashader Canvas 생성 및 aggregation 수행
     cvs = ds.Canvas(plot_width=output_width, plot_height=output_height,
                     x_range=(0, nCols), y_range=(0, nRows))
     agg = cvs.raster(computed_xr_da)
 
     # vmin, vmax 설정
     vmin = 0
-    vmax = matrix.max()
+    vmax = global_vmax
 
-    # 사용자 정의 colormap: 낮은 값은 네이비, 중간은 빨간색, 높은 값은 노란색
+    # 사용자 정의 colormap: navy → red → yellow (연속 선형 보간)
     colors = ["navy", "red", "yellow"]
     thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
 
-    # 정수 값에 맞춘 discrete한 색상 구분을 위해 BoundaryNorm 사용
-    boundaries = np.arange(vmin, vmax + 2)  # 정수 경계: vmin부터 vmax+1까지
-    norm = BoundaryNorm(boundaries, ncolors=thermal_cmap.N, clip=True)
-
-    # matplotlib를 사용한 시각화: Figure 크기 12x8인치 → 1200x800 픽셀
-    plt.figure(figsize=(12, 8))
+    plt.figure(figsize=(12, 8))  # 12x8 인치 → 1200x800 픽셀
     extent = (0, nCols, 0, nRows)
-    img = plt.imshow(agg.values, cmap=thermal_cmap, norm=norm, origin="lower",
-                 extent=extent, aspect="auto")
+    img = plt.imshow(agg.values, cmap=thermal_cmap, origin="lower",
+                     extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
     plt.xlabel("Snapshot (Time)")
     plt.ylabel("PFN")
     plt.title(f"Node {node} - Migration Heatmap")
-    # 색상바는 정수 tick만 사용하도록 설정
+    
+    # y축: 하단은 PFN start, 상단은 PFN end로 표시
+    plt.yticks([0, nRows], [nr.start, nr.end])
+    
+    # 색상바: 정수 tick만 표시
     cbar = plt.colorbar(img, ticks=np.arange(vmin, vmax + 1))
     cbar.set_label("Migration Count")
     plt.tight_layout()
@@ -180,7 +182,7 @@ def main():
     num_threads = args.threads
     pfn_stats_file = "/sys/kernel/debug/numa_folio/pfn_stats"
 
-    # 1. PFN 범위(노드별) 로딩
+    # PFN 범위 로딩
     node_ranges = []
     print(f"Loading PFN stats from {pfn_stats_file}...")
     load_pfn_ranges_stats(pfn_stats_file, node_ranges)
@@ -189,14 +191,23 @@ def main():
         sys.exit(1)
     node_ranges.sort(key=lambda nr: nr.node)
 
-    # 2. Snapshot 로그 파일 병렬 로딩
+    # 로그 파일 병렬 로딩
     print(f"Loading logs from {log_dir} using {num_threads} thread(s)...")
     load_logs_parallel(log_dir, num_threads)
 
-    # 3. 전체 스냅샷 개수 계산 (최대 snapshot index + 1)
+    # 전체 스냅샷 개수 계산
     num_snapshots = max(snapshot_data.keys()) + 1 if snapshot_data else 0
 
-    # 4. 각 노드별 매트릭스 생성 및 히트맵 시각화
+    # 전체 로그에서의 global maximum migrate count 계산
+    global_max = 0
+    for stats in snapshot_data.values():
+        if stats:
+            max_val = max(stat.migrate_count for stat in stats)
+            if max_val > global_max:
+                global_max = max_val
+    print(f"Global maximum migration count: {global_max}")
+
+    # 각 노드별로 매트릭스 생성 및 히트맵 시각화
     for nr in node_ranges:
         nRows = nr.end - nr.start + 1
         print(f"Building matrix for node {nr.node} with {nRows} rows and {num_snapshots} columns.")
@@ -211,7 +222,7 @@ def main():
                 row_indices = pfns[mask] - nr.start
                 matrix[row_indices, snap_idx] = counts[mask]
         print(f"Aggregating and generating heatmap for node {nr.node} at 1200x800 resolution...")
-        visualize_heatmap_node_dask(nr.node, matrix, num_threads)
+        visualize_heatmap_node_dask(nr, matrix, num_threads, global_max)
 
 if __name__ == "__main__":
     main()
