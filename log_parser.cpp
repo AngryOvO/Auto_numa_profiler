@@ -125,8 +125,9 @@ py::dict parse_logs_numpy(const std::string &log_dir, int num_threads) {
         int snapshot_idx = item.first;
         const auto &records = item.second;
         ssize_t num_records = records.size();
-        // NumPy 배열 생성 (형상: [num_records, 3])
-        py::array_t<int> arr({num_records, 3});
+        // 여기서 shape를 지정할 때 std::vector를 사용합니다.
+        std::vector<py::ssize_t> shape = { static_cast<py::ssize_t>(num_records), 3 };
+        py::array_t<int> arr(shape);
         auto r = arr.mutable_unchecked<2>();  // 빠른 인덱싱을 위한 unchecked 접근자
         for (ssize_t i = 0; i < num_records; i++) {
             r(i, 0) = std::get<0>(records[i]);
