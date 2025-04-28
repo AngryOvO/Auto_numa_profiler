@@ -1799,12 +1799,12 @@ move:
 		dst2 = list_next_entry(dst, lru);
 		list_for_each_entry_safe(folio, folio2, &unmap_folios, lru) {
 			// [hayong]
-			int source_nid = folio_nid(folio);
-			int dest_nid = folio_nid(dst);
-			int pfn = folio_pfn(dst);
-			int pfn2 = folio_pfn(folio);
-			int offset = get_pfn_for_node(dest_nid, pfn);
-			int offset2 = get_pfn_for_node(source_nid, pfn2);
+			// int source_nid = folio_nid(folio);
+			// int dest_nid = folio_nid(dst);
+			// int pfn = folio_pfn(dst);
+			// int pfn2 = folio_pfn(folio);
+			// int offset = get_pfn_for_node(dest_nid, pfn);
+			// int offset2 = get_pfn_for_node(source_nid, pfn2);
 		
 			is_thp = folio_test_large(folio) && folio_test_pmd_mappable(folio);
 			nr_pages = folio_nr_pages(folio);
@@ -1828,22 +1828,22 @@ move:
 				break;
 			case MIGRATEPAGE_SUCCESS:
 				// [hayong]
-				if(target_pid != -1)
-				{
-					pid_t current_pid;
+				// if(target_pid != -1)
+				// {
+				// 	pid_t current_pid;
 
-					struct task_struct *leader = rcu_dereference(current->group_leader);
-					current_pid = leader ? leader->pid : current->pid;
+				// 	struct task_struct *leader = rcu_dereference(current->group_leader);
+				// 	current_pid = leader ? leader->pid : current->pid;
 
-					if (target_pid == current_pid) {
-						if (numa_profile_stat && numa_profile_stat[dest_nid]) {
-							numa_profile_stat[dest_nid][offset].source_pfn = pfn2;
-							int new_folio_migrate_count = folio_migrate_count(dst);
-							set_migrate_count(&numa_profile_stat[dest_nid][offset], new_folio_migrate_count);
-							set_migrate_count(&numa_profile_stat[source_nid][offset2], 0);
-						}
-					}
-				}
+				// 	if (target_pid == current_pid) {
+				// 		if (numa_profile_stat && numa_profile_stat[dest_nid]) {
+				// 			numa_profile_stat[dest_nid][offset].source_pfn = pfn2;
+				// 			int new_folio_migrate_count = folio_migrate_count(dst);
+				// 			set_migrate_count(&numa_profile_stat[dest_nid][offset], new_folio_migrate_count);
+				// 			set_migrate_count(&numa_profile_stat[source_nid][offset2], 0);
+				// 		}
+				// 	}
+				// }
 				stats->nr_succeeded += nr_pages;
 				stats->nr_thp_succeeded += is_thp;
 				break;
@@ -2732,9 +2732,9 @@ static int numa_folio_stats_show(struct seq_file *m, void *v)
 
             for (unsigned long pfn = start_pfn; pfn < end_pfn; pfn++) {
                 unsigned long node_pfn = get_pfn_for_node(nid, pfn);
-                if (atomic_read(&stat[node_pfn].current_migrate_count) > 0) {
-					//currunt_folio_pfn, source_pfn, current_migrate_count
-                    seq_printf(m, "%lu,%lu,%d\n", pfn, stat[node_pfn].source_pfn, atomic_read(&stat[node_pfn].current_migrate_count));
+                if (atomic_read(&stat[node_pfn].current_ref_count) > 0) {
+					//currunt_folio_pfn, source_pfn, current_ref_count
+                    seq_printf(m, "%lu,%d\n", pfn, atomic_read(&stat[node_pfn].current_ref_count));
                 }
             }
         }

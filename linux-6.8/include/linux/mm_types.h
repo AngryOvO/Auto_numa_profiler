@@ -993,20 +993,20 @@ struct mm_struct {
 // [hayong] auto numa profiling
 struct numa_folio_stat
 {
-	unsigned long source_pfn;
-	atomic_t current_migrate_count;
+	atomic_t current_ref_count;
 };
 
+extern pid_t target_pid;
 extern struct numa_folio_stat **numa_profile_stat;
 
-static inline void set_migrate_count(struct numa_folio_stat *stat, int v)
+static inline void set_ref_count(struct numa_folio_stat *stat, int v)
 {
-	atomic_set(&stat->current_migrate_count, v);
+	atomic_set(&stat->current_ref_count, v);
 }
 
-static inline int get_migrate_count(struct numa_folio_stat *stat)
+static inline int get_ref_count(struct numa_folio_stat *stat)
 {
-	return atomic_read(&stat->current_migrate_count);
+	return atomic_read(&stat->current_ref_count);
 }
 
 // [hayong] auto numa profiling
