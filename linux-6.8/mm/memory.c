@@ -5012,7 +5012,8 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 		{
 			if (numa_profile_stat && numa_profile_stat[nid]) 
 			{
-				int new_folio_ref_count = folio_ref_count(folio);
+				folio_migrate_count_inc(folio);
+				int new_folio_ref_count = folio_migrate_count(folio);
 				set_ref_count(&numa_profile_stat[nid][offset], new_folio_ref_count);
 			}
 		}
