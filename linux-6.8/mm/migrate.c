@@ -75,7 +75,7 @@
 
 struct numa_folio_stat **numa_profile_stat;
 static unsigned long get_pfn_for_node(int nid, unsigned long pfn);
-static pid_t target_pid = -1;
+pid_t target_pid = -1;
 
 bool isolate_movable_page(struct page *page, isolate_mode_t mode)
 {
@@ -2675,8 +2675,6 @@ extern struct numa_folio_stat **numa_profile_stat;
 static struct dentry *debugfs_root;
 static struct dentry *folio_stats_file;
 static struct dentry *pfn_stats_file;
-
-static pid_t target_pid;
 
 /* NUMA folio 통계 메모리 초기화  
  * 각 NUMA 노드별로 연속된 가상 메모리 영역을 할당

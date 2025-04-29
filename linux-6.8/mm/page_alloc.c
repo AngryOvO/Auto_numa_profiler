@@ -1549,7 +1549,7 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 		int pfn = page_to_pfn(page);
 		int offset = get_pfn_for_node(nid, pfn);
 		init_page_migration_count(page);
-		set_migrate_count(&numa_profile_stat[nid][offset], 0);
+		set_ref_count(&numa_profile_stat[nid][offset], 0);
 		
 	}
 }
