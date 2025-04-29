@@ -2832,7 +2832,7 @@ SYSCALL_DEFINE0(migrate_table_reset)
                 unsigned long local_pfn = get_pfn_for_node(nid, pfn);
                 if (local_pfn >= pages_per_node)  /* OOB 체크 */
                     continue;
-                set_migrate_count(&stat[local_pfn], 0);
+                set_ref_count(&stat[local_pfn], 0);
             }
         }
     }
