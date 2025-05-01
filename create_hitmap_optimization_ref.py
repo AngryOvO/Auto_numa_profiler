@@ -29,10 +29,7 @@ class NodeRange:
     start: int
     end: int
 
-# ---------------------- 글로벌 변수 ----------------------
-# (이전 snapshot_data 딕셔너리 대신 전역 배열를 사용함)
-# ---------------------------------------------------------------------
-# PFN 범위 로딩 (pfn_stats 파일)
+# ---------------------- PFN 범위 로딩 (pfn_stats 파일) ----------------------
 def load_pfn_ranges_stats(filename, node_ranges):
     try:
         with open(filename, "r") as infile:
@@ -49,7 +46,7 @@ def load_pfn_ranges_stats(filename, node_ranges):
         m = node_pattern.search(line)
         if m:
             node = int(m.group(1))
-            i += 1  # 다음 줄이 범위 정보
+            i += 1  # 다음 줄에 PFN 범위가 있음
             if i < len(lines):
                 range_line = lines[i].strip()
                 m2 = range_pattern.search(range_line)
@@ -62,17 +59,17 @@ def load_pfn_ranges_stats(filename, node_ranges):
                     print(f"Error parsing range line: {range_line}")
         i += 1
 
-# ---------------------- C++ 확장 모듈을 사용한 로그 파싱 (노드0 전역 배열 방식) ----------------------
-def load_global_snapshot_array(log_dir, num_threads):
+# ---------------------- C++ 확장 모듈을 사용한 로그 파싱 (모든 노드 전역 배열 방식) ----------------------
+def load_all_nodes_global_snapshot_array(log_dir, num_threads):
     """
-    C++ 확장 모듈의 parse_logs_global_array() 함수를 호출하여,
-    노드 0의 PFN 범위에 따른 전역 NumPy 배열을 반환한다.
-    전역 배열의 shape는 (total_pfns, num_snapshots)이며, 각각의 셀에는 해당 PFN의 refcount 값이 기록된다.
+    C++ 확장 모듈의 parse_logs_global_array_all_nodes() 함수를 호출하여,
+    각 노드의 PFN 범위에 따른 전역 NumPy 배열 dict를 반환한다.
+    반환 dict 형식: {node_id: NumPy array}, 각 배열의 shape는 (total_pfns, num_snapshots)
     """
-    print(f"Using C++ extension (global array) to parse logs in {log_dir} with {num_threads} threads...")
-    global_array = log_parser.parse_logs_global_array(log_dir, num_threads)
-    print(f"Global array shape: {global_array.shape}")
-    return global_array
+    print(f"Using C++ extension (global array for all nodes) to parse logs in {log_dir} with {num_threads} threads...")
+    global_arrays = log_parser.parse_logs_global_array_all_nodes(log_dir, num_threads)
+    print(f"Global arrays returned for nodes: {list(global_arrays.keys())}")
+    return global_arrays
 
 # ---------------------- 노드별 히트맵 시각화 (1200x800 해상도, Dask+Datashader) ----------------------
 def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax):
@@ -105,7 +102,7 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax):
     colors = ["navy", "red", "yellow"]
     thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
 
-    plt.figure(figsize=(12, 8))  # 12x8 인치 → 1200x800 픽셀
+    plt.figure(figsize=(12, 8))
     extent = (0, nCols, 0, nRows)
     img = plt.imshow(agg.values, cmap=thermal_cmap, origin="lower",
                      extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
@@ -150,21 +147,23 @@ def main():
         sys.exit(1)
     node_ranges.sort(key=lambda nr: nr.node)
 
-    # C++ 확장을 이용해 전역 배열(노드0 기준)을 파싱
-    global_array = load_global_snapshot_array(log_dir, num_threads)
+    # C++ 확장을 이용해 모든 노드 전역 배열을 파싱
+    global_arrays = load_all_nodes_global_snapshot_array(log_dir, num_threads)
 
-    # 전체 전역 배열에서 최대 reference count를 구함
-    global_max = int(np.max(global_array))
+    # 전체 전역 배열에서 최대 reference count를 구함 (모든 노드 배열의 최대값 중 최대값)
+    global_max = 0
+    for arr in global_arrays.values():
+        max_val = int(np.max(arr))
+        if max_val > global_max:
+            global_max = max_val
     print(f"Global maximum reference count: {global_max}")
 
-    # 새로운 방식은 C++ 확장이 노드 0 전용 배열을 반환하므로,
-    # node_ranges 중에서 node 0에 해당하는 정보만 사용합니다.
+    # 각 노드에 대해 히트맵 시각화 진행
     for nr in node_ranges:
-        if nr.node != 0:
-            print(f"Skipping node {nr.node} (global array is for node 0 only).")
+        if nr.node not in global_arrays:
+            print(f"No global array for node {nr.node}. Skipping.")
             continue
-        # global_array는 이미 노드 0 전체 PFN 정보를 담고있으므로 직접 사용
-        matrix = np.array(global_array)  # matrix shape: (nRows, num_snapshots)
+        matrix = np.array(global_arrays[nr.node])  # shape: (nRows, num_snapshots)
         print(f"Aggregating and generating heatmap for node {nr.node} ({nr.start} to {nr.end})...")
         visualize_heatmap_node_dask(nr, matrix, num_threads, global_max)
 
