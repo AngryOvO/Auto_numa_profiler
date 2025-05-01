@@ -103,7 +103,7 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
     # 나머지는 global_vmax개의 색상으로 생성합니다.
     n_grad = global_vmax  if global_vmax > 0 else 1
     # 생성할 gradient: navy → red → yellow; global_vmax개의 색상
-    grad_cmap = LinearSegmentedColormap.from_list("grad", ["navy", "red", "yellow"], N=n_grad)
+    grad_cmap = LinearSegmentedColormap.from_list("grad", ["navy", "red", "yellow", "white"], N=n_grad)
     # sample 색상값을 생성: index 0부터 n_grad-1
     grad_colors = [grad_cmap(i/(n_grad-1)) for i in range(n_grad)] if n_grad > 1 else ["navy"]
     # 전체 색상 리스트: 값 0은 black, 그 외는 gradient_colors (값 1=grad_colors[0], 2=grad_colors[1], …)
