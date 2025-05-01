@@ -98,7 +98,7 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
     vmax = global_vmax
 
     # 사용자 정의 colormap: 0은 검은색, 1부터 navy → red → yellow
-    colors = ["black", "navy", "red", "yellow"]
+    colors = ["black", "navy", "red", "yellow", "white"]
     thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
 
     # vmin, vmax 설정
