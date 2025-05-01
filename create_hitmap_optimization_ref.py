@@ -11,7 +11,7 @@ import numpy as np
 import dask.array as da
 import xarray as xr
 import datashader as ds
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap, BoundaryNorm
 import matplotlib.pyplot as plt
 
 # C++ 확장 모듈 임포트 (빌드한 모듈)
@@ -93,29 +93,41 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
                     x_range=(0, nCols), y_range=(0, nRows))
     agg = cvs.raster(computed_xr_da)
 
-    # 색상 매핑:
-    # 0인 값은 "black", 1부터 vmax까지는 "navy" → "red" → "yellow"로 변화하도록 설정.
-    vmin = 0       # 최소값 0 -> 자동으로 black이 할당됨 (리스트의 첫 색상)
-    vmax = global_vmax
-    colors = ["black", "navy", "red", "yellow"]
-    thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
-    # set_under 호출 제거: vmin이 0이므로 0은 이미 colormap의 시작 색(black)으로 매핑됨.
+    # --- 컬러맵 구현 ---
+    # 요구사항: 실제 데이터 값 0은 완전히 검은색,
+    # 1부터 최대값까지는 이산적으로 매핑하여 1은 navy, 최대값은 yellow로, 중간에 red를 포함한 그라데이션.
+    # refcount 값은 정수라고 가정.
+    # boundary 설정: 값들을 구간별로 나눕니다.
+    boundaries = np.arange(-0.5, global_vmax + 1.5, 1)  # 예: -0.5, 0.5, 1.5, ..., global_vmax+0.5
+    # 데이터 0에 해당하는 bin은 첫 번째 색상.
+    # 나머지는 global_vmax개의 색상으로 생성합니다.
+    n_grad = global_vmax  if global_vmax > 0 else 1
+    # 생성할 gradient: navy → red → yellow; global_vmax개의 색상
+    grad_cmap = LinearSegmentedColormap.from_list("grad", ["navy", "red", "yellow"], N=n_grad)
+    # sample 색상값을 생성: index 0부터 n_grad-1
+    grad_colors = [grad_cmap(i/(n_grad-1)) for i in range(n_grad)] if n_grad > 1 else ["navy"]
+    # 전체 색상 리스트: 값 0은 black, 그 외는 gradient_colors (값 1=grad_colors[0], 2=grad_colors[1], …)
+    color_list = ["black"] + grad_colors
+    listed_cmap = ListedColormap(color_list)
+    norm = BoundaryNorm(boundaries, listed_cmap.N)
 
-    # matplotlib figure 크기는 인치 단위; (DPI 100 기준)
+    # matplotlib figure 크기 (DPI 100 기준, 인치 단위)
     figsize = (output_width / 100, output_height / 100)
     plt.figure(figsize=figsize)
     extent = (0, nCols, 0, nRows)
-    img = plt.imshow(agg.values, cmap=thermal_cmap, origin="lower",
-                     extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
+    
+    # imshow에 norm과 ListedColormap 지정
+    img = plt.imshow(agg.values, cmap=listed_cmap, norm=norm, origin="lower",
+                     extent=extent, aspect="auto")
     plt.xlabel("Snapshot (Time)")
     plt.ylabel("PFN")
     plt.title(f"Node {node} - Reference Count Heatmap")
     
-    # y축: 하단은 PFN start, 상단은 PFN end로 표시
+    # y축에 PFN range 표시: 맨 아래는 nr.start, 맨 위는 nr.end
     plt.yticks([0, nRows], [nr.start, nr.end])
     
-    # 색상바: 정수 tick만 표시
-    cbar = plt.colorbar(img, ticks=np.arange(1, vmax + 1))
+    # 색상바: 정수 tick만 표시 (1부터 global_vmax)
+    cbar = plt.colorbar(img, boundaries=boundaries, ticks=np.arange(1, global_vmax+1))
     cbar.set_label("Reference Count")
     plt.tight_layout()
     
