@@ -5014,7 +5014,7 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 			{
 				int new_folio_remote_flag;
 				if(nid != numa_node_id())
-					new_folio_remote_flag = 1
+					new_folio_remote_flag = 1;
 				else
 					new_folio_remote_flag = 2;
 				set_ref_count(&numa_profile_stat[nid][offset], new_folio_remote_flag);
