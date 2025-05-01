@@ -97,19 +97,25 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
     vmin = 0
     vmax = global_vmax
 
-    # 사용자 정의 colormap: navy → red → yellow
-    colors = ["navy", "red", "yellow"]
+    # 사용자 정의 colormap: 0은 검은색, 1부터 navy → red → yellow
+    colors = ["black", "navy", "red", "yellow"]
     thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
 
-    # matplotlib figure 크기는 인치 단위; 보통 DPI 100 기준으로 설정 (예: 1200px -> 12인치)
-    figsize = (output_width / 100, output_height / 100)
+    # vmin, vmax 설정
+    vmin = 1  # 최소값을 1로 변경하여 1부터 navy로 표현되도록 설정
+    vmax = global_vmax
+
     plt.figure(figsize=figsize)
     extent = (0, nCols, 0, nRows)
-    img = plt.imshow(agg.values, cmap=thermal_cmap, origin="lower",
-                     extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
+    img = plt.imshow(agg.values, cmap=thermal_cmap, origin="lower", extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
+
+    # 0인 값은 검은색으로 표현되도록 설정
+    thermal_cmap.set_under("black")
+
     plt.xlabel("Snapshot (Time)")
     plt.ylabel("PFN")
     plt.title(f"Node {node} - Reference Count Heatmap")
+
     
     # y축: 하단은 PFN start, 상단은 PFN end로 표시
     plt.yticks([0, nRows], [nr.start, nr.end])
