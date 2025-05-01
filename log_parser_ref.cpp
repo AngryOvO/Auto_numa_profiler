@@ -100,19 +100,31 @@ py::dict parse_logs_global_array_all_nodes(const std::string &log_dir, int num_t
     for (const auto &entry : fs::directory_iterator(log_dir)) {
         if (entry.is_regular_file()) {
             std::string filename = entry.path().filename().string();
+            // 필터: 접두사와 확장자 확인
             if (filename.rfind("folio_stats_snapshot_", 0) == 0 &&
                 entry.path().extension() == ".log") {
                 log_files.push_back(entry.path());
             }
         }
     }
-    std::sort(log_files.begin(), log_files.end());
+    // 숫자 순 정렬: 파일명에서 snapshot 번호를 추출해서 비교
+    std::regex num_regex("folio_stats_snapshot_(\\d+)\\.log");
+    std::sort(log_files.begin(), log_files.end(), [&](const fs::path &a, const fs::path &b) {
+        std::smatch match_a, match_b;
+        std::string name_a = a.filename().string();
+        std::string name_b = b.filename().string();
+        int num_a = 0, num_b = 0;
+        if (std::regex_search(name_a, match_a, num_regex) && match_a.size() == 2) {
+            num_a = std::stoi(match_a[1].str());
+        }
+        if (std::regex_search(name_b, match_b, num_regex) && match_b.size() == 2) {
+            num_b = std::stoi(match_b[1].str());
+        }
+        return num_a < num_b;
+    });
     size_t num_snapshots = log_files.size();
 
     // 각 노드별로 NumPy 배열을 할당 및 결과 dict에 저장.
-    // node_arrays: vector에 각 배열을 저장. 순서는 node_ranges 순서와 동일.
-    // 노드별 배열의 shape: [total_pfns, num_snapshots]
-    py::dict result;
     // 노드 정보 구조체
     struct NodeInfo {
         int node;
@@ -120,9 +132,10 @@ py::dict parse_logs_global_array_all_nodes(const std::string &log_dir, int num_t
         size_t total_pfns;
     };
     std::vector<NodeInfo> nodes;
-    // 각 배열에 대한 포인터를 저장 (각 배열은 row-major order).
+    // 각 배열에 대한 포인터들을 저장 (각 배열은 row-major order)
     std::vector<py::array_t<int>> node_arrays;
-    std::vector<int*> data_ptrs;  // 각 배열의 데이터 포인터
+    std::vector<int*> data_ptrs;
+    py::dict result;
     for (auto &entry : node_ranges) {
         int node = std::get<0>(entry);
         int start = std::get<1>(entry);
@@ -133,10 +146,9 @@ py::dict parse_logs_global_array_all_nodes(const std::string &log_dir, int num_t
                                            static_cast<py::ssize_t>(num_snapshots) };
         py::array_t<int> arr(shape);
         node_arrays.push_back(arr);
-        // 결과 dict: key는 int(node) -> value는 해당 배열
         result[py::int_(node)] = arr;
     }
-    // 각 배열는 연속된 메모리를 할당하므로, 얻은 버퍼에서 포인터를 추출합니다.
+    // 각 배열의 데이터 포인터 추출
     for (auto &arr : node_arrays) {
         auto buf = arr.request();
         int* ptr = static_cast<int*>(buf.ptr);
@@ -164,13 +176,11 @@ py::dict parse_logs_global_array_all_nodes(const std::string &log_dir, int num_t
                 // 각 노드에 대해, 만약 기록된 pfn가 해당 노드 범위에 속하면 업데이트한다.
                 for (size_t ni = 0; ni < nodes.size(); ni++) {
                     const auto &node_info = nodes[ni];
-                    // 만약 pfn가 노드 범위 [start, start+total_pfns-1]에 포함되면
                     if (pfn >= node_info.start && pfn < node_info.start + static_cast<int>(node_info.total_pfns)) {
                         int local_index = pfn - node_info.start;
-                        // 각 배열의 layout은 row-major (행: PFN, 열: snapshot)이며,
-                        // offset = local_index * num_snapshots + idx
+                        // 배열의 layout이 row-major: offset = local_index * num_snapshots + idx
                         data_ptrs[ni][local_index * num_snapshots + idx] = refcount;
-                        break;  // 한 pfn는 단 하나의 노드에 속함.
+                        break;  // 한 pfn은 단 하나의 노드에 속함.
                     }
                 }
             }
