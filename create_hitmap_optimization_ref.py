@@ -93,38 +93,29 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
                     x_range=(0, nCols), y_range=(0, nRows))
     agg = cvs.raster(computed_xr_da)
 
-    # vmin, vmax 설정
-    vmin = 0
+    # 색상 매핑:
+    # 값이 0이면 검은색, 1부터 최대값 까지는 navy -> red -> yellow로 변화
+    vmin = 1  # 최소값을 1로 설정 (1부터 네이비 색상이 시작되도록)
     vmax = global_vmax
-
-    # 사용자 정의 colormap: 0은 검은색, 1부터 navy → red → yellow
     colors = ["black", "navy", "red", "yellow", "white"]
     thermal_cmap = LinearSegmentedColormap.from_list("thermal", colors, N=256)
+    thermal_cmap.set_under("black")  # vmin 미만 값(즉, 0)은 검은색 처리
 
-    # vmin, vmax 설정
-    vmin = 1  # 최소값을 1로 변경하여 1부터 navy로 표현되도록 설정
-    vmax = global_vmax
-
+    # matplotlib figure 크기는 인치 단위 (DPI 100 기준)
+    figsize = (output_width / 100, output_height / 100)
     plt.figure(figsize=figsize)
     extent = (0, nCols, 0, nRows)
-    img = plt.imshow(agg.values, cmap=thermal_cmap, origin="lower", extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
-
-    # 0인 값은 검은색으로 표현되도록 설정
-    thermal_cmap.set_under("black")
-
+    img = plt.imshow(agg.values, cmap=thermal_cmap, origin="lower",
+                     extent=extent, aspect="auto", vmin=vmin, vmax=vmax)
     plt.xlabel("Snapshot (Time)")
     plt.ylabel("PFN")
     plt.title(f"Node {node} - Reference Count Heatmap")
-
-    
     # y축: 하단은 PFN start, 상단은 PFN end로 표시
     plt.yticks([0, nRows], [nr.start, nr.end])
-    
     # 색상바: 정수 tick만 표시
     cbar = plt.colorbar(img, ticks=np.arange(vmin, vmax + 1))
     cbar.set_label("Reference Count")
     plt.tight_layout()
-    
     filename = f"heatmap_node_{node}.png"
     plt.savefig(filename)
     plt.close()
@@ -163,7 +154,7 @@ def main():
     # C++ 확장을 이용해 모든 노드 전역 배열을 파싱
     global_arrays = load_all_nodes_global_snapshot_array(log_dir, num_threads)
 
-    # 전체 전역 배열에서 최대 reference count를 구함 (모든 노드 배열 중 최대값)
+    # 모든 노드 배열에서 최대 refcount 값을 구함
     global_max = 0
     for arr in global_arrays.values():
         max_val = int(np.max(arr))
@@ -176,7 +167,7 @@ def main():
         if nr.node not in global_arrays:
             print(f"No global array for node {nr.node}. Skipping.")
             continue
-        matrix = np.array(global_arrays[nr.node])  # shape: (nRows, num_snapshots)
+        matrix = np.array(global_arrays[nr.node])
         print(f"Aggregating and generating heatmap for node {nr.node} ({nr.start} to {nr.end})...")
         visualize_heatmap_node_dask(nr, matrix, num_threads, global_max, output_width, output_height)
 
