@@ -4909,12 +4909,17 @@ int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 
 	/* Record the current PID acceesing VMA */
 	vma_set_access_pid_bit(vma);
-
+	int new_folio_remote_flag;
 	count_vm_numa_event(NUMA_HINT_FAULTS);
 	if (page_nid == numa_node_id()) {
 		count_vm_numa_event(NUMA_HINT_FAULTS_LOCAL);
+		new_folio_remote_flag = 1;
 		*flags |= TNF_FAULT_LOCAL;
 	}
+	else
+		new_folio_remote_flag = 2;
+
+	set_folio_migrate_count(folio, new_folio_remote_flag);
 
 	return mpol_misplaced(folio, vma, addr);
 }
@@ -5011,16 +5016,7 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 		if (target_pid == current_pid) 
 		{
 			if (numa_profile_stat && numa_profile_stat[nid]) 
-			{
-				int new_folio_remote_flag;
-				if(nid != numa_node_id())
-					new_folio_remote_flag = 1;
-				else
-					new_folio_remote_flag = 2;
-
-				set_folio_migrate_count(folio, new_folio_remote_flag);
 				set_ref_count(&numa_profile_stat[nid][offset], folio_migrate_count(folio));
-			}
 		}
 	}
 	/*
