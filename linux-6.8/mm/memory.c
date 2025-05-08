@@ -4901,6 +4901,16 @@ static vm_fault_t do_fault(struct vm_fault *vmf)
 	}
 	return ret;
 }
+// [hayong] auto_numa_profiler
+extern struct numa_folio_stat **numa_profile_stat;
+extern pid_t target_pid;
+
+/* pfn을 각 NUMA 노드 내에서 고유한 인덱스로 변환 */
+static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
+{
+    unsigned long node_base_pfn = node_start_pfn(nid);  /* 해당 노드의 첫 PFN */
+    return pfn - node_base_pfn;
+}
 
 int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 		      unsigned long addr, int page_nid, int *flags)
@@ -4921,21 +4931,26 @@ int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 
 	set_folio_migrate_count(folio, new_folio_remote_flag);
 
+	nid = folio_nid(folio);
+
+	int pfn = folio_pfn(folio);
+	int offset = get_pfn_for_node(nid, pfn);
+
+	if(target_pid != -1)
+	{
+		pid_t current_pid;
+		
+		struct task_struct *leader = rcu_dereference(current->group_leader);
+		current_pid = leader ? leader->pid : current->pid;
+		
+		if (target_pid == current_pid) 
+		{
+			if (numa_profile_stat && numa_profile_stat[nid]) 
+				set_ref_count(&numa_profile_stat[nid][offset], folio_migrate_count(folio));
+		}
+	}
 	return mpol_misplaced(folio, vma, addr);
 }
-
-// [hayong] auto_numa_profiler
-extern struct numa_folio_stat **numa_profile_stat;
-extern pid_t target_pid;
-
-/* pfn을 각 NUMA 노드 내에서 고유한 인덱스로 변환 */
-static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
-{
-    unsigned long node_base_pfn = node_start_pfn(nid);  /* 해당 노드의 첫 PFN */
-    return pfn - node_base_pfn;
-}
-
-
 
 static vm_fault_t do_numa_page(struct vm_fault *vmf)
 {
@@ -5001,24 +5016,7 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 	if (folio_estimated_sharers(folio) > 1 && (vma->vm_flags & VM_SHARED))
 		flags |= TNF_SHARED;
 
-	nid = folio_nid(folio);
-
-	int pfn = folio_pfn(folio);
-	int offset = get_pfn_for_node(nid, pfn);
-
-	if(target_pid != -1)
-	{
-		pid_t current_pid;
-		
-		struct task_struct *leader = rcu_dereference(current->group_leader);
-		current_pid = leader ? leader->pid : current->pid;
-		
-		if (target_pid == current_pid) 
-		{
-			if (numa_profile_stat && numa_profile_stat[nid]) 
-				set_ref_count(&numa_profile_stat[nid][offset], folio_migrate_count(folio));
-		}
-	}
+	
 	/*
 	 * For memory tiering mode, cpupid of slow memory page is used
 	 * to record page access time.  So use default value.
