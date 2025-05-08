@@ -632,9 +632,9 @@ void folio_migrate_flags(struct folio *newfolio, struct folio *folio)
 
 
 	//[hayong] auto numa profiler
-	copy_migrate_count(newfolio, folio);
-	folio_migrate_count_inc(newfolio);
-	set_folio_migrate_count(folio, 0);
+	// copy_migrate_count(newfolio, folio);
+	// folio_migrate_count_inc(newfolio);
+	// set_folio_migrate_count(folio, 0);
 
 	folio_migrate_ksm(newfolio, folio);
 	/*
