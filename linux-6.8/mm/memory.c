@@ -4933,9 +4933,8 @@ int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 
 	set_folio_migrate_count(folio, new_folio_remote_flag);
 
-	int nid = folio_nid(folio);
 	int pfn = folio_pfn(folio);
-	int offset = get_pfn_for_node(nid, pfn);
+	int offset = get_pfn_for_node(page_nid, pfn);
 
 	if(target_pid != -1)
 	{
@@ -4947,8 +4946,8 @@ int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 		if (target_pid == current_pid) 
 		{
 			pr_info("cpu=%d, numa_node_id()=%d, page_nid=%d\n", smp_processor_id(), numa_node_id(), page_nid);
-			if (numa_profile_stat && numa_profile_stat[nid]) 
-				set_ref_count(&numa_profile_stat[nid][offset], folio_migrate_count(folio));
+			if (numa_profile_stat && numa_profile_stat[page_nid]) 
+				set_ref_count(&numa_profile_stat[page_nid][offset], folio_migrate_count(folio));
 		}
 	}
 	return mpol_misplaced(folio, vma, addr);
