@@ -4931,7 +4931,7 @@ int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 
 	set_folio_migrate_count(folio, new_folio_remote_flag);
 
-	nid = folio_nid(folio);
+	int nid = folio_nid(folio);
 
 	int pfn = folio_pfn(folio);
 	int offset = get_pfn_for_node(nid, pfn);
