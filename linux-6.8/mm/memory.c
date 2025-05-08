@@ -4921,6 +4921,11 @@ int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 	vma_set_access_pid_bit(vma);
 	int new_folio_remote_flag;
 	count_vm_numa_event(NUMA_HINT_FAULTS);
+
+	pr_info("cpu=%d, numa_node_id()=%d, page_nid=%d\n",
+	smp_processor_id(), numa_node_id(), page_nid);
+
+	
 	if (page_nid == numa_node_id()) {
 		count_vm_numa_event(NUMA_HINT_FAULTS_LOCAL);
 		new_folio_remote_flag = 2;
@@ -4932,7 +4937,6 @@ int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 	set_folio_migrate_count(folio, new_folio_remote_flag);
 
 	int nid = folio_nid(folio);
-
 	int pfn = folio_pfn(folio);
 	int offset = get_pfn_for_node(nid, pfn);
 
