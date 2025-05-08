@@ -17,43 +17,8 @@ import matplotlib.pyplot as plt
 # C++ 확장 모듈 임포트 (빌드한 모듈)
 import log_parser
 
-# Numba 및 Datashader의 CustomReduction 임포트
-import numba as nb
-from datashader.reductions import CustomReduction
-
-# ----------------------------------------
-# 커스텀 aggregator: 각 픽셀 내 모든 값의 0,1,2에 대한 히스토그램을 누적한 후
-# 최빈값(mode)을 선택하는 방식.
-# 아래 함수들은 각각 초기화(init), 한 값(accumulate), 두 히스토그램 병합(merge),
-# 그리고 최종 단계(finalize)를 구현합니다.
-#
-# 이 방식은 분산/병렬 집계에 적합하도록 설계되었습니다.
-# ----------------------------------------
-
-@nb.njit
-def mode_init():
-    # 히스토그램 초기화: 0, 1, 2 각 카테고리에 대해 3칸 배열 (int64)
-    return np.zeros(3, dtype=np.int64)
-
-@nb.njit
-def mode_accumulate(hist, value):
-    # value가 0,1,2 범위에 있다면 해당 bin을 1 증가시킴
-    if value >= 0 and value < 3:
-        hist[int(value)] += 1
-    return hist
-
-@nb.njit
-def mode_merge(hist1, hist2):
-    # 두 히스토그램을 element-wise로 합산
-    return hist1 + hist2
-
-@nb.njit
-def mode_finalize(hist):
-    # 최종 히스토그램에서 최대 카운트를 가진 인덱스를 반환 (최빈값)
-    return np.argmax(hist)
-
-# CustomReduction 객체 생성: 위의 네 함수를 전달합니다.
-mode_reducer = CustomReduction(mode_init, mode_accumulate, mode_merge, mode_finalize)
+# CustomReduction 관련 Numba import 및 CustomReduction 코드는 제거했습니다.
+# 대신 Datashader의 기본 제공 aggregator인 ds.mode()를 사용합니다.
 
 # ---------------------- 구조체 정의 (dataclass 사용) ----------------------
 @dataclass
@@ -109,7 +74,7 @@ def load_all_nodes_global_snapshot_array(log_dir, num_threads):
     print(f"Global arrays returned for nodes: {list(global_arrays.keys())}")
     return global_arrays
 
-# ---------------------- 노드별 히트맵 시각화 (사용자 지정 해상도, Dask+Datashader with 커스텀 aggregator) ----------------------
+# ---------------------- 노드별 히트맵 시각화 (사용자 지정 해상도, Dask+Datashader with ds.mode()) ----------------------
 def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_width, output_height):
     """
     nr: NodeRange 객체 (노드 번호와 해당 노드의 PFN 범위)
@@ -126,10 +91,10 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
     xr_da = xr.DataArray(dask_matrix, dims=["y", "x"])
     computed_xr_da = xr_da.compute()
 
-    # Datashader Canvas 생성 및 커스텀 mode_reducer를 적용하여 집계 수행
+    # Datashader Canvas 생성 및 ds.mode() 집계 함수를 적용하여 집계 수행
     cvs = ds.Canvas(plot_width=output_width, plot_height=output_height,
                     x_range=(0, nCols), y_range=(0, nRows))
-    agg = cvs.raster(computed_xr_da, agg=mode_reducer)
+    agg = cvs.raster(computed_xr_da, agg=ds.mode())
 
     # --- 고정 컬러맵 구현 ---
     # 0: black, 1: navy, 2: red 로 매핑
