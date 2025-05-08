@@ -5018,7 +5018,7 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 	if (folio_estimated_sharers(folio) > 1 && (vma->vm_flags & VM_SHARED))
 		flags |= TNF_SHARED;
 
-	
+	nid = folio_nid(folio);
 	/*
 	 * For memory tiering mode, cpupid of slow memory page is used
 	 * to record page access time.  So use default value.
