@@ -77,7 +77,7 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
     nr: NodeRange 객체 (노드 번호와 해당 노드의 PFN 범위)
     matrix: 해당 노드의 NumPy 배열 (nRows x num_snapshots)
     num_threads: 사용 스레드 수
-    global_vmax: 모든 노드에서의 최대 reference count (모든 히트맵에 동일하게 적용)
+    global_vmax: 모든 노드에서의 최대 reference count (이제는 2로 고정되어 있음)
     output_width, output_height: 최종 출력 이미지의 해상도 (픽셀 단위)
     """
     node = nr.node
@@ -93,25 +93,15 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
                     x_range=(0, nCols), y_range=(0, nRows))
     agg = cvs.raster(computed_xr_da)
 
-    # --- 컬러맵 구현 ---
-    # 요구사항: 실제 데이터 값 0은 완전히 검은색,
-    # 1부터 최대값까지는 이산적으로 매핑하여 1은 navy, 최대값은 yellow로, 중간에 red를 포함한 그라데이션.
-    # refcount 값은 정수라고 가정.
-    # boundary 설정: 값들을 구간별로 나눕니다.
-    boundaries = np.arange(-0.5, global_vmax + 1.5, 1)  # 예: -0.5, 0.5, 1.5, ..., global_vmax+0.5
-    # 데이터 0에 해당하는 bin은 첫 번째 색상.
-    # 나머지는 global_vmax개의 색상으로 생성합니다.
-    n_grad = global_vmax  if global_vmax > 0 else 1
-    # 생성할 gradient: navy → red → yellow; global_vmax개의 색상
-    grad_cmap = LinearSegmentedColormap.from_list("grad", ["navy", "red"], N=n_grad)
-    # sample 색상값을 생성: index 0부터 n_grad-1
-    grad_colors = [grad_cmap(i/(n_grad-1)) for i in range(n_grad)] if n_grad > 1 else ["navy"]
-    # 전체 색상 리스트: 값 0은 black, 그 외는 gradient_colors (값 1=grad_colors[0], 2=grad_colors[1], …)
-    color_list = ["black"] + grad_colors
+    # --- 고정 컬러맵 구현 ---
+    # 0: black, 1: navy, 2: red 로 매핑
+    # 경계값은 -0.5, 0.5, 1.5, 2.5 로 설정하여 각 값이 정확히 해당 색상의 영역에 들어가게 함.
+    boundaries = [-0.5, 0.5, 1.5, 2.5]
+    color_list = ["black", "navy", "red"]
     listed_cmap = ListedColormap(color_list)
     norm = BoundaryNorm(boundaries, listed_cmap.N)
 
-    # matplotlib figure 크기 (DPI 100 기준, 인치 단위)
+    # matplotlib figure 생성 (DPI 100 기준, 인치 단위)
     figsize = (output_width / 100, output_height / 100)
     plt.figure(figsize=figsize)
     extent = (0, nCols, 0, nRows)
@@ -126,8 +116,8 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
     # y축에 PFN range 표시: 맨 아래는 nr.start, 맨 위는 nr.end
     plt.yticks([0, nRows], [nr.start, nr.end])
     
-    # 색상바: 정수 tick만 표시 (1부터 global_vmax)
-    cbar = plt.colorbar(img, boundaries=boundaries, ticks=np.arange(1, global_vmax+1))
+    # 색상바: 0, 1, 2 값을 tick으로 표시
+    cbar = plt.colorbar(img, boundaries=boundaries, ticks=[0, 1, 2])
     cbar.set_label("Reference Count")
     plt.tight_layout()
     
@@ -135,6 +125,7 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
     plt.savefig(filename)
     plt.close()
     print(f"Saved aggregated heatmap for node {node} as {filename}")
+
 
 # ---------------------- 메인 함수 ----------------------
 def main():
