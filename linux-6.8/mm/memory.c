@@ -4913,11 +4913,11 @@ int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
 	count_vm_numa_event(NUMA_HINT_FAULTS);
 	if (page_nid == numa_node_id()) {
 		count_vm_numa_event(NUMA_HINT_FAULTS_LOCAL);
-		new_folio_remote_flag = 1;
+		new_folio_remote_flag = 2;
 		*flags |= TNF_FAULT_LOCAL;
 	}
 	else
-		new_folio_remote_flag = 2;
+		new_folio_remote_flag = 1;
 
 	set_folio_migrate_count(folio, new_folio_remote_flag);
 
