@@ -180,6 +180,7 @@ int main(int argc, char *argv[]) {
     // 워크로드 종료 대기
     waitpid(pid, NULL, 0);
     printf("Workload completed and data collection finished.\n");
+    execute_folio_stat_reset();
 
     return EXIT_SUCCESS;
 }

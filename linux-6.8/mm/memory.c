@@ -5017,7 +5017,9 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 					new_folio_remote_flag = 1;
 				else
 					new_folio_remote_flag = 2;
-				set_ref_count(&numa_profile_stat[nid][offset], new_folio_remote_flag);
+
+				set_folio_migrate_count(folio, new_folio_remote_flag);
+				set_ref_count(&numa_profile_stat[nid][offset], folio_migrate_count(folio));
 			}
 		}
 	}
