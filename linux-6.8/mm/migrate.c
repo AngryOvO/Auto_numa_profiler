@@ -2672,10 +2672,7 @@ out:
 #endif /* CONFIG_NUMA_BALANCING */
 #endif /* CONFIG_NUMA */
 
-
-static struct dentry *debugfs_root;
-static struct dentry *folio_stats_file;
-static struct dentry *pfn_stats_file;
+static struct dentry *prof_dir;
 
 /* NUMA folio 통계 메모리 초기화  
  * 각 NUMA 노드별로 연속된 가상 메모리 영역을 할당
@@ -2716,16 +2713,6 @@ static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
 }
 
 /*
- * 각 노드별 folio_stats 파일 오픈 시 호출.
- * inode의 private 데이터에 저장된 노드 번호를 single_open에 넘겨줍니다.
- */
-static int numa_folio_stats_open(struct inode *inode, struct file *file)
-{
-    int nid = (int)(long)inode->i_private;
-    return single_open(file, numa_folio_stats_show, (void *)(long)nid);
-}
-
-/*
  * 해당 노드(nid)의 folio stat 정보를 출력합니다.
  */
 static int numa_folio_stats_show(struct seq_file *m, void *v)
@@ -2749,6 +2736,16 @@ static int numa_folio_stats_show(struct seq_file *m, void *v)
     }
 
     return 0;
+}
+
+/*
+ * 각 노드별 folio_stats 파일 오픈 시 호출.
+ * inode의 private 데이터에 저장된 노드 번호를 single_open에 넘겨줍니다.
+ */
+static int numa_folio_stats_open(struct inode *inode, struct file *file)
+{
+    int nid = (int)(long)inode->i_private;
+    return single_open(file, numa_folio_stats_show, (void *)(long)nid);
 }
 
 /* file_operations는 이전과 동일하게 설정합니다. */
