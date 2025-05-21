@@ -2885,8 +2885,8 @@ SYSCALL_DEFINE0(stop_global_folio_log)
  * late_initcall을 사용하여 초기화 단계에 등록 (모듈 빌드 시 module_exit도 사용)
  */
 late_initcall(init_folio_stat);
-late_initcall(numa_folio_debugfs_init);
-module_exit(numa_folio_debugfs_exit);
+late_initcall(numa_profiler_debugfs_init);
+module_exit(numa_profiler_debugfs_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("hayong");

@@ -4904,7 +4904,7 @@ static vm_fault_t do_fault(struct vm_fault *vmf)
 // [hayong] auto_numa_profiler
 extern struct numa_folio_stat **numa_profile_stat;
 extern pid_t target_pid;
-extern bool global_profile_enabled = false; // 전체 시스템 프로파일링
+extern bool global_profile_enabled; // 전체 시스템 프로파일링
 
 /* pfn을 각 NUMA 노드 내에서 고유한 인덱스로 변환 */
 static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
