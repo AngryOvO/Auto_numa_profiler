@@ -2672,8 +2672,6 @@ out:
 #endif /* CONFIG_NUMA_BALANCING */
 #endif /* CONFIG_NUMA */
 
-static struct dentry *prof_dir;
-
 /* NUMA folio 통계 메모리 초기화  
  * 각 NUMA 노드별로 연속된 가상 메모리 영역을 할당
  */
