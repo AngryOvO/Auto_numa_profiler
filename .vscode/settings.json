@@ -70,6 +70,7 @@
         "cinttypes": "cpp",
         "typeinfo": "cpp",
         "unordered_set": "cpp",
-        "internal.h": "c"
+        "internal.h": "c",
+        "migrate.h": "c"
     }
 }

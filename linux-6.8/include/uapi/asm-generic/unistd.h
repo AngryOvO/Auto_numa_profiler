@@ -846,10 +846,15 @@ __SYSCALL(__NR_lsm_list_modules, sys_lsm_list_modules)
 __SYSCALL(__NR_migrate_table_reset, sys_migrate_table_reset)
 #define __NR_start_folio_log, 463
 __SYSCALL(__NR_start_folio_log, start_folio_log)
+#define __NR_start_global_folio_log, 464
+__SYSCALL(__NR_start_global_folio_log, start_global_folio_log)
+#define __NR_stop_global_folio_log, 465
+__SYSCALL(__NR_stop_global_folio_log, stop_global_folio_log)
+
 
 
 #undef __NR_syscalls
-#define __NR_syscalls 464
+#define __NR_syscalls 466
 
 
 

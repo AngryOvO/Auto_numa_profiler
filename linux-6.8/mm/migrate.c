@@ -76,6 +76,8 @@
 struct numa_folio_stat **numa_profile_stat;
 static unsigned long get_pfn_for_node(int nid, unsigned long pfn);
 pid_t target_pid = -1;
+bool global_profile_enabled = false; // 전체 시스템 프로파일링
+
 
 bool isolate_movable_page(struct page *page, isolate_mode_t mode)
 {
@@ -2670,7 +2672,6 @@ out:
 #endif /* CONFIG_NUMA_BALANCING */
 #endif /* CONFIG_NUMA */
 
-extern struct numa_folio_stat **numa_profile_stat;
 
 static struct dentry *debugfs_root;
 static struct dentry *folio_stats_file;
@@ -2714,46 +2715,50 @@ static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
     return pfn - node_base_pfn;
 }
 
-/* debugfs의 folio_stats 파일에 출력할 내용을 seq_file 인터페이스로 구성 */
+/*
+ * 각 노드별 folio_stats 파일 오픈 시 호출.
+ * inode의 private 데이터에 저장된 노드 번호를 single_open에 넘겨줍니다.
+ */
+static int numa_folio_stats_open(struct inode *inode, struct file *file)
+{
+    int nid = (int)(long)inode->i_private;
+    return single_open(file, numa_folio_stats_show, (void *)(long)nid);
+}
+
+/*
+ * 해당 노드(nid)의 folio stat 정보를 출력합니다.
+ */
 static int numa_folio_stats_show(struct seq_file *m, void *v)
 {
-    int nid;
+    int nid = (int)(long)m->private;
+    struct numa_folio_stat *stat;
+    unsigned long start_pfn, end_pfn;
 
-    for_each_online_node(nid) {
-        if (!numa_profile_stat || !numa_profile_stat[nid])
-            continue;
+    if (!numa_profile_stat || !numa_profile_stat[nid])
+        return 0;
 
-        {
-            struct numa_folio_stat *stat = numa_profile_stat[nid];
-            unsigned long start_pfn = node_start_pfn(nid);
-            unsigned long end_pfn   = node_end_pfn(nid);
+    stat = numa_profile_stat[nid];
+    start_pfn = node_start_pfn(nid);
+    end_pfn   = node_end_pfn(nid);
 
-            for (unsigned long pfn = start_pfn; pfn < end_pfn; pfn++) {
-                unsigned long node_pfn = get_pfn_for_node(nid, pfn);
-                if (atomic_read(&stat[node_pfn].current_ref_count) > 0) {
-					//currunt_folio_pfn, source_pfn, current_ref_count
-                    seq_printf(m, "%lu,%d\n", pfn, atomic_read(&stat[node_pfn].current_ref_count));
-                }
-            }
-        }
+    for (unsigned long pfn = start_pfn; pfn < end_pfn; pfn++) {
+        unsigned long node_pfn = get_pfn_for_node(nid, pfn);
+        if (atomic_read(&stat[node_pfn].current_ref_count) > 0)
+            seq_printf(m, "%lu,%d\n", pfn,
+                       atomic_read(&stat[node_pfn].current_ref_count));
     }
 
     return 0;
 }
 
-/* folio_stats 파일 오픈 시 호출 */
-static int numa_folio_stats_open(struct inode *inode, struct file *file)
-{
-    return single_open(file, numa_folio_stats_show, NULL);
-}
-
-/* debugfs에서 사용할 file_operations 구조체 (folio_stats용) */
+/* file_operations는 이전과 동일하게 설정합니다. */
 static const struct file_operations numa_folio_stats_fops = {
     .open    = numa_folio_stats_open,
     .read    = seq_read,
     .llseek  = seq_lseek,
     .release = single_release,
 };
+
 
 /* debugfs의 pfn_stats 파일에 출력할 내용을 구조화 */
 static int node_pfn_stats_show(struct seq_file *m, void *v)
@@ -2783,31 +2788,38 @@ static const struct file_operations node_pfn_stats_fops = {
     .release = single_release,
 };
 
-/* debugfs 초기화: "numa_folio" 디렉토리와 하위 파일들을 생성 */
-static int __init numa_folio_debugfs_init(void)
+static int __init numa_profiler_debugfs_init(void)
 {
-    debugfs_root = debugfs_create_dir("numa_folio", NULL);
-    if (!debugfs_root) {
-        printk(KERN_ERR "Failed to create debugfs directory 'numa_folio'\n");
+    int nid;
+    struct dentry *prof_dir;
+    char filename[32];
+
+    /* "numa_profiler" 디렉터리 생성 */
+    prof_dir = debugfs_create_dir("numa_profiler", NULL);
+    if (!prof_dir) {
+        printk(KERN_ERR "Failed to create debugfs directory 'numa_profiler'\n");
         return -ENOMEM;
     }
 
-    folio_stats_file = debugfs_create_file("folio_stats", 0444,
-                                           debugfs_root, NULL,
-                                           &numa_folio_stats_fops);
+    /* 전체 노드의 PFN 정보를 출력하는 파일 생성 */
+    debugfs_create_file("node_pfn_stats", 0444, prof_dir,
+                        NULL, &node_pfn_stats_fops);
 
-    pfn_stats_file = debugfs_create_file("pfn_stats", 0444,
-                                         debugfs_root, NULL,
-                                         &node_pfn_stats_fops);
+    /* 각 노드별 folio stats 파일 생성 */
+    for_each_online_node(nid) {
+        snprintf(filename, sizeof(filename), "node%d_folio_stats", nid);
+        debugfs_create_file(filename, 0444, prof_dir,
+                            (void *)(long)nid,
+                            &numa_folio_stats_fops);
+    }
 
-    printk(KERN_INFO "Debugfs entries for NUMA folio created.\n");
+    printk(KERN_INFO "Debugfs entries for NUMA profiler created.\n");
     return 0;
 }
 
-/* debugfs 종료 시 등록했던 엔트리 제거 */
-static void __exit numa_folio_debugfs_exit(void)
+static void __exit numa_profiler_debugfs_exit(void)
 {
-    debugfs_remove_recursive(debugfs_root);
+    debugfs_remove_recursive(debugfs_lookup("numa_profiler", NULL));
 }
 
 /* 시스템 콜 정의: migrate_table_reset  
@@ -2853,6 +2865,21 @@ SYSCALL_DEFINE1(start_folio_log, pid_t, pid)
     printk(KERN_INFO "Folio log recording started.\n");
     return 0;
 }
+
+SYSCALL_DEFINE0(start_global_folio_log)
+{
+    global_profile_enabled = true;
+    printk(KERN_INFO "Global folio log recording started for entire system.\n");
+    return 0;
+}
+
+SYSCALL_DEFINE0(stop_global_folio_log)
+{
+    global_profile_enabled = false;
+    printk(KERN_INFO "Global folio log recording stopped.\n");
+    return 0;
+}
+
 
 /*
  * late_initcall을 사용하여 초기화 단계에 등록 (모듈 빌드 시 module_exit도 사용)

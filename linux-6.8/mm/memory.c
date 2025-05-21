@@ -4904,6 +4904,7 @@ static vm_fault_t do_fault(struct vm_fault *vmf)
 // [hayong] auto_numa_profiler
 extern struct numa_folio_stat **numa_profile_stat;
 extern pid_t target_pid;
+extern bool global_profile_enabled = false; // 전체 시스템 프로파일링
 
 /* pfn을 각 NUMA 노드 내에서 고유한 인덱스로 변환 */
 static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
@@ -4913,44 +4914,45 @@ static unsigned long get_pfn_for_node(int nid, unsigned long pfn)
 }
 
 int numa_migrate_prep(struct folio *folio, struct vm_area_struct *vma,
-		      unsigned long addr, int page_nid, int *flags)
+                      unsigned long addr, int page_nid, int *flags)
 {
-	folio_get(folio);
+    folio_get(folio);
 
-	/* Record the current PID acceesing VMA */
-	vma_set_access_pid_bit(vma);
-	int new_folio_remote_flag;
-	count_vm_numa_event(NUMA_HINT_FAULTS);
+    /* Record the current PID accessing the VMA */
+    vma_set_access_pid_bit(vma);
+    int new_folio_remote_flag;
+    count_vm_numa_event(NUMA_HINT_FAULTS);
 
+    if (page_nid == numa_node_id()) {
+        count_vm_numa_event(NUMA_HINT_FAULTS_LOCAL);
+        new_folio_remote_flag = 2;
+        *flags |= TNF_FAULT_LOCAL;
+    } else {
+        new_folio_remote_flag = 1;
+    }
 
-	if (page_nid == numa_node_id()) {
-		count_vm_numa_event(NUMA_HINT_FAULTS_LOCAL);
-		new_folio_remote_flag = 2;
-		*flags |= TNF_FAULT_LOCAL;
-	}
-	else
-		new_folio_remote_flag = 1;
+    set_folio_migrate_count(folio, new_folio_remote_flag);
 
-	set_folio_migrate_count(folio, new_folio_remote_flag);
+    int pfn = folio_pfn(folio);
+    int offset = get_pfn_for_node(page_nid, pfn);
 
-	int pfn = folio_pfn(folio);
-	int offset = get_pfn_for_node(page_nid, pfn);
+    /* Determine whether to record profiling information */
+    if (global_profile_enabled || (target_pid != -1)) {
+        pid_t current_pid;
+        struct task_struct *leader = rcu_dereference(current->group_leader);
+        current_pid = leader ? leader->pid : current->pid;
 
-	if(target_pid != -1)
-	{
-		pid_t current_pid;
-		
-		struct task_struct *leader = rcu_dereference(current->group_leader);
-		current_pid = leader ? leader->pid : current->pid;
-		
-		if (target_pid == current_pid) 
-		{
-			pr_info("cpu=%d, numa_node_id()=%d, page_nid=%d\n", smp_processor_id(), numa_node_id(), page_nid);
-			if (numa_profile_stat && numa_profile_stat[page_nid]) 
-				set_ref_count(&numa_profile_stat[page_nid][offset], folio_migrate_count(folio));
-		}
-	}
-	return mpol_misplaced(folio, vma, addr);
+        /* PID 모드에서는 특정 PID와 비교하고,
+           global 모드에서는 모든 프로세스에 대해 기록 */
+        if (global_profile_enabled || (target_pid == current_pid)) {  
+            pr_info("cpu=%d, numa_node_id()=%d, page_nid=%d\n", 
+                    smp_processor_id(), numa_node_id(), page_nid);
+            if (numa_profile_stat && numa_profile_stat[page_nid])
+                set_ref_count(&numa_profile_stat[page_nid][offset],
+                              folio_migrate_count(folio));
+        }
+    }
+    return mpol_misplaced(folio, vma, addr);
 }
 
 static vm_fault_t do_numa_page(struct vm_fault *vmf)

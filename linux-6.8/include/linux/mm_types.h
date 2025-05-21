@@ -998,6 +998,7 @@ struct numa_folio_stat
 
 extern pid_t target_pid;
 extern struct numa_folio_stat **numa_profile_stat;
+extern bool global_profile_enabled = false; // 전체 시스템 프로파일링
 
 static inline void set_ref_count(struct numa_folio_stat *stat, int v)
 {
