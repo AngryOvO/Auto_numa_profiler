@@ -150,17 +150,26 @@ int main(int argc, char *argv[]) {
 
     // 명령줄 인자 파싱
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--log_dir") == 0 && i + 1 < argc) {
-            log_dir = argv[++i];
-        } else if (strcmp(argv[i], "--interval") == 0 && i + 1 < argc) {
-            interval = atof(argv[++i]);
-        } else if (strcmp(argv[i], "--global") == 0) {
-            global_mode = 1;
-        } else {
-            command = &argv[i];
-            break;
-        }
+    if (strcmp(argv[i], "--help") == 0) {
+        printf("Usage: %s [--log_dir <log_dir>] [--interval <interval>] [--global] <command> [args...]\n", argv[0]);
+        printf("\nOptions:\n");
+        printf("  --log_dir <log_dir>  Specify directory to store log files (default: folio_logs)\n");
+        printf("  --interval <interval> Set the data collection interval in seconds (default: 1.0)\n");
+        printf("  --global             Enable global profiling mode\n");
+        printf("  <command> [args...]  Specify the workload command to execute\n");
+        exit(EXIT_SUCCESS); // 사용법 출력 후 프로그램 종료
+    } else if (strcmp(argv[i], "--log_dir") == 0 && i + 1 < argc) {
+        log_dir = argv[++i];
+    } else if (strcmp(argv[i], "--interval") == 0 && i + 1 < argc) {
+        interval = atof(argv[++i]);
+    } else if (strcmp(argv[i], "--global") == 0) {
+        global_mode = 1;
+    } else {
+        command = &argv[i];
+        break;
     }
+}
+
 
     if (!command) {
         fprintf(stderr, "Error: No workload command provided.\n");
