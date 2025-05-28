@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +19,7 @@
 
 #define DEBUGFS_DIR "/sys/kernel/debug/numa_profiler"
 
-/* 이전에 작성한 helper 함수들 (execute_folio_stat_reset, send_pid_to_syscall, create_directory, collect_data 등) 그대로 유지 */
+/* 기존 helper 함수들 */
 
 void execute_folio_stat_reset() {
     printf("Executing folio_stat_reset syscall (%d)...\n", SYS_FOLIO_STAT_RESET);
@@ -60,13 +61,55 @@ void create_directory(const char *path) {
     }
 }
 
-/*
- * 기존과 같이 여러 debugfs 파일(노드별 folio_stats, node_pfn_stats 등)을 하나의 스냅샷 파일에 통합해서 저장하는 함수
- */
-void collect_data(const char *log_dir, pid_t workload_pid, float interval) {
-    char buffer[65536]; // 64KB 버퍼
-    int snapshot = 0;
+/* 멀티스레딩을 위한 thread argument 구조체 */
+typedef struct {
+    char file_path[512];       // debugfs 파일 전체 경로
+    char file_name[256];       // 파일 이름 (헤더에 사용)
+    char temp_file_path[512];  // 각 스레드가 쓸 임시 파일 이름
+} thread_arg_t;
 
+/* 각 스레드가 실행할 함수: 해당 debugfs 파일을 읽어 임시 파일에 기록 */
+void *read_debugfs_file(void *arg) {
+    thread_arg_t *targ = (thread_arg_t *)arg;
+    int fd = open(targ->file_path, O_RDONLY);
+    if (fd < 0) {
+        perror("Error opening debugfs file in thread");
+        pthread_exit(NULL);
+    }
+    
+    FILE *temp_fp = fopen(targ->temp_file_path, "w");
+    if (!temp_fp) {
+        perror("Error opening temporary file in thread");
+        close(fd);
+        pthread_exit(NULL);
+    }
+    
+    // 헤더 작성
+    fprintf(temp_fp, "=== File: %s ===\n", targ->file_name);
+    
+    char buffer[65536];
+    ssize_t bytes_read;
+    while ((bytes_read = read(fd, buffer, sizeof(buffer) - 1)) > 0) {
+        buffer[bytes_read] = '\0';
+        fputs(buffer, temp_fp);
+    }
+    if (bytes_read < 0) {
+        perror("Error reading debugfs file in thread");
+    }
+    
+    fprintf(temp_fp, "\n\n");
+    
+    fclose(temp_fp);
+    close(fd);
+    pthread_exit(NULL);
+}
+
+/*
+ * 멀티스레드를 활용하여 각 debugfs 파일(노드별 folio_stats)을 읽고 각 스레드가 임시 파일에 기록,
+ * 이후 이 임시 파일들을 하나의 스냅샷 파일로 병합하는 함수
+ */
+void collect_data_multithread(const char *log_dir, pid_t workload_pid, float interval) {
+    int snapshot = 0;
     printf("Collecting data into snapshot files in %s until workload finishes...\n", log_dir);
 
     while (1) {
@@ -74,63 +117,75 @@ void collect_data(const char *log_dir, pid_t workload_pid, float interval) {
             printf("Workload process has exited. Stopping data collection.\n");
             break;
         }
-
-        char filename[256];
-        snprintf(filename, sizeof(filename), "%s/folio_profiler_snapshot_%d.log", log_dir, ++snapshot);
-        FILE *output_file = fopen(filename, "w");
-        if (!output_file) {
-            perror("Error opening snapshot file");
-            break;
-        }
-
+        
+        snapshot++; // 새로운 스냅샷 번호
         DIR *dir = opendir(DEBUGFS_DIR);
         if (!dir) {
             perror("Error opening debugfs directory");
-            fclose(output_file);
             break;
         }
-
+        
+        #define MAX_FILES 128
+        char file_paths[MAX_FILES][512];
+        char file_names[MAX_FILES][256];
+        int file_count = 0;
         struct dirent *entry;
-        while ((entry = readdir(dir)) != NULL) {
+        while ((entry = readdir(dir)) != NULL && file_count < MAX_FILES) {
             if (strcmp(entry->d_name, ".") == 0 ||
                 strcmp(entry->d_name, "..") == 0)
                 continue;
-            
             if (strstr(entry->d_name, "folio_stats") == NULL)
                 continue;
-
-            char file_path[512];
-            snprintf(file_path, sizeof(file_path), "%s/%s", DEBUGFS_DIR, entry->d_name);
-
-            int fd = open(file_path, O_RDONLY);
-            if (fd < 0) {
-                perror("Error opening debugfs file");
-                continue;
-            }
-
-            fprintf(output_file, "=== File: %s ===\n", entry->d_name);
-
-            ssize_t total_bytes_read = 0;
-            while (1) {
-                ssize_t bytes_read = read(fd, buffer, sizeof(buffer) - 1);
-                if (bytes_read < 0) {
-                    perror("Error reading debugfs file");
-                    break;
-                }
-                if (bytes_read == 0)
-                    break;
-
-                buffer[bytes_read] = '\0';
-                fprintf(output_file, "%s", buffer);
-                total_bytes_read += bytes_read;
-            }
-            fprintf(output_file, "\n\n");
-            close(fd);
-            printf("Read %zd bytes from %s\n", total_bytes_read, file_path);
+            snprintf(file_paths[file_count], sizeof(file_paths[file_count]), "%s/%s", DEBUGFS_DIR, entry->d_name);
+            snprintf(file_names[file_count], sizeof(file_names[file_count]), "%s", entry->d_name);
+            file_count++;
         }
         closedir(dir);
-        fclose(output_file);
-        printf("Snapshot %d saved to %s\n", snapshot, filename);
+
+        // 각 파일마다 스레드 생성
+        pthread_t threads[MAX_FILES];
+        thread_arg_t args[MAX_FILES];
+        for (int i = 0; i < file_count; i++) {
+            strncpy(args[i].file_path, file_paths[i], sizeof(args[i].file_path));
+            strncpy(args[i].file_name, file_names[i], sizeof(args[i].file_name));
+            // 임시 파일 이름 예: "<log_dir>/temp_snapshot_<snapshot>_file_<i>.tmp"
+            snprintf(args[i].temp_file_path, sizeof(args[i].temp_file_path),
+                     "%s/temp_snapshot_%d_file_%d.tmp", log_dir, snapshot, i);
+
+            if (pthread_create(&threads[i], NULL, read_debugfs_file, &args[i]) != 0) {
+                perror("Error creating thread");
+            }
+        }
+
+        // 모든 스레드가 작업을 마칠 때까지 대기
+        for (int i = 0; i < file_count; i++) {
+            pthread_join(threads[i], NULL);
+        }
+
+        // 임시 파일들을 최종 스냅샷 파일로 병합
+        char snapshot_filename[256];
+        snprintf(snapshot_filename, sizeof(snapshot_filename), "%s/folio_profiler_snapshot_%d.log", log_dir, snapshot);
+        FILE *snapshot_fp = fopen(snapshot_filename, "w");
+        if (!snapshot_fp) {
+            perror("Error creating snapshot file");
+            break;
+        }
+
+        for (int i = 0; i < file_count; i++) {
+            FILE *temp_fp = fopen(args[i].temp_file_path, "r");
+            if (temp_fp) {
+                char buffer[4096];
+                size_t n;
+                while ((n = fread(buffer, 1, sizeof(buffer), temp_fp)) > 0) {
+                    fwrite(buffer, 1, n, snapshot_fp);
+                }
+                fclose(temp_fp);
+                if (unlink(args[i].temp_file_path) < 0)
+                    perror("Error deleting temporary file");
+            }
+        }
+        fclose(snapshot_fp);
+        printf("Snapshot %d saved to %s\n", snapshot, snapshot_filename);
 
         usleep((int)(interval * 1000000));
     }
@@ -150,26 +205,25 @@ int main(int argc, char *argv[]) {
 
     // 명령줄 인자 파싱
     for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--help") == 0) {
-        printf("Usage: %s [--log_dir <log_dir>] [--interval <interval>] [--global] <command> [args...]\n", argv[0]);
-        printf("\nOptions:\n");
-        printf("  --log_dir <log_dir>  Specify directory to store log files (default: folio_logs)\n");
-        printf("  --interval <interval> Set the data collection interval in seconds (default: 1.0)\n");
-        printf("  --global             Enable global profiling mode\n");
-        printf("  <command> [args...]  Specify the workload command to execute\n");
-        exit(EXIT_SUCCESS); // 사용법 출력 후 프로그램 종료
-    } else if (strcmp(argv[i], "--log_dir") == 0 && i + 1 < argc) {
-        log_dir = argv[++i];
-    } else if (strcmp(argv[i], "--interval") == 0 && i + 1 < argc) {
-        interval = atof(argv[++i]);
-    } else if (strcmp(argv[i], "--global") == 0) {
-        global_mode = 1;
-    } else {
-        command = &argv[i];
-        break;
+        if (strcmp(argv[i], "--help") == 0) {
+            printf("Usage: %s [--log_dir <log_dir>] [--interval <interval>] [--global] <command> [args...]\n", argv[0]);
+            printf("\nOptions:\n");
+            printf("  --log_dir <log_dir>  Specify directory to store log files (default: folio_logs)\n");
+            printf("  --interval <interval> Set the data collection interval in seconds (default: 1.0)\n");
+            printf("  --global             Enable global profiling mode\n");
+            printf("  <command> [args...]  Specify the workload command to execute\n");
+            exit(EXIT_SUCCESS);
+        } else if (strcmp(argv[i], "--log_dir") == 0 && i + 1 < argc) {
+            log_dir = argv[++i];
+        } else if (strcmp(argv[i], "--interval") == 0 && i + 1 < argc) {
+            interval = atof(argv[++i]);
+        } else if (strcmp(argv[i], "--global") == 0) {
+            global_mode = 1;
+        } else {
+            command = &argv[i];
+            break;
+        }
     }
-}
-
 
     if (!command) {
         fprintf(stderr, "Error: No workload command provided.\n");
@@ -193,8 +247,8 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    /* 프로파일링 모드에 따라 시스템 콜 호출 
-       --global 옵션이 설정되면 전체 시스템 프로파일링, 
+    /* 프로파일링 모드에 따라 시스템 콜 호출
+       --global 옵션이 설정되면 전체 시스템 프로파일링,
        그렇지 않으면 특정 프로세스(PID) 프로파일링 */
     if (global_mode) {
         printf("Starting global folio log profiling...\n");
@@ -203,16 +257,17 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     } else {
+        // PID 전달 전에 조금 대기해서 워크로드가 안정적으로 시작되도록 함
         sleep(1);
         send_pid_to_syscall(pid);
     }
 
-    /* 데이터 수집 */
-    collect_data(log_dir, pid, interval);
+    /* 멀티스레딩을 적용한 데이터 수집 */
+    collect_data_multithread(log_dir, pid, interval);
 
     waitpid(pid, NULL, 0);
 
-    /* global 모드인 경우 profiling 종료 */
+    /* global 모드일 경우 profiling 종료 */
     if (global_mode) {
         if (syscall(SYS_STOP_GLOBAL_FOLIO_LOG) < 0) {
             perror("Error stopping global folio log profiling");
