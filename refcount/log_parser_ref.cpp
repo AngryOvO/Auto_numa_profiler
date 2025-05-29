@@ -101,14 +101,14 @@ py::dict parse_logs_global_array_all_nodes(const std::string &log_dir, int num_t
         if (entry.is_regular_file()) {
             std::string filename = entry.path().filename().string();
             // 필터: 접두사와 확장자 확인
-            if (filename.rfind("folio_stats_snapshot_", 0) == 0 &&
+            if (filename.rfind("folio_profiler_snapshot_", 0) == 0 &&
                 entry.path().extension() == ".log") {
                 log_files.push_back(entry.path());
             }
         }
     }
     // 숫자 순 정렬: 파일명에서 snapshot 번호를 추출해서 비교
-    std::regex num_regex("folio_stats_snapshot_(\\d+)\\.log");
+    std::regex num_regex("folio_profiler_snapshot_(\\d+)\\.log");
     std::sort(log_files.begin(), log_files.end(), [&](const fs::path &a, const fs::path &b) {
         std::smatch match_a, match_b;
         std::string name_a = a.filename().string();

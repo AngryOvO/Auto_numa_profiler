@@ -40,12 +40,12 @@ bool parse_line(const std::string &line, int &pfn, int &source_pfn, int &migrate
 }
 
 py::dict parse_logs_numpy(const std::string &log_dir, int num_threads) {
-    // 1. 로그 파일 목록 수집 (파일명이 "folio_stats_snapshot_*.log")
+    // 1. 로그 파일 목록 수집 (파일명이 "folio_profiler_snapshot_*.log")
     std::vector<fs::path> log_files;
     for (const auto &entry : fs::directory_iterator(log_dir)) {
         if (entry.is_regular_file()) {
             std::string filename = entry.path().filename().string();
-            if (filename.rfind("folio_stats_snapshot_", 0) == 0 &&
+            if (filename.rfind("folio_profiler_snapshot_", 0) == 0 &&
                 entry.path().extension() == ".log") {
                 log_files.push_back(entry.path());
             }
@@ -72,7 +72,7 @@ py::dict parse_logs_numpy(const std::string &log_dir, int num_threads) {
             std::string fname = file_path.filename().string();
             int snapshot_idx = 0;
             try {
-                size_t prefix_len = std::string("folio_stats_snapshot_").size();
+                size_t prefix_len = std::string("folio_profiler_snapshot_").size();
                 size_t pos = fname.find(".log", prefix_len);
                 std::string num_str = fname.substr(prefix_len, pos - prefix_len);
                 snapshot_idx = std::stoi(num_str);
