@@ -148,7 +148,7 @@ def main():
     num_threads = args.threads
     output_width = args.width
     output_height = args.height
-    pfn_stats_file = "/sys/kernel/debug/numa_folio/pfn_stats"
+    pfn_stats_file = "/sys/kernel/debug/numa_profiler/node_pfn_stats"
 
     # PFN 범위 로딩 (모든 노드 정보 로드)
     node_ranges = []
