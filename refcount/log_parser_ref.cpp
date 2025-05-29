@@ -84,7 +84,7 @@ bool parse_line(const std::string &line, int &pfn, int &refcount) {
 // 반환값: 노드 번호를 key로, 해당 NumPy 배열을 value로 하는 dict.
 py::dict parse_logs_global_array_all_nodes(const std::string &log_dir, int num_threads) {
     // pfn_stats 파일 경로
-    std::string pfn_stats_file = "/sys/kernel/debug/numa_folio/pfn_stats";
+    std::string pfn_stats_file = "/sys/kernel/debug/numa_profiler/node_pfn_stats";
     // 모든 노드의 PFN 범위 읽기
     auto node_ranges = get_all_node_ranges(pfn_stats_file);
     if (node_ranges.empty())
@@ -202,7 +202,7 @@ py::dict parse_logs_global_array_all_nodes(const std::string &log_dir, int num_t
 
 PYBIND11_MODULE(log_parser, m) {
     m.doc() = "Global-array based log parser for all nodes. "
-              "Reads NUMA node PFN ranges from '/sys/kernel/debug/numa_folio/pfn_stats' and allocates, for each node, "
+              "Reads NUMA node PFN ranges from '/sys/kernel/debug/numa_profiler/node_pfn_stats' and allocates, for each node, "
               "a NumPy array with shape (total_pfns, num_snapshots) (row: node-local PFN, column: snapshot). "
               "Each cell contains the refcount for that PFN at that snapshot.";
     m.def("parse_logs_global_array_all_nodes", &parse_logs_global_array_all_nodes,
