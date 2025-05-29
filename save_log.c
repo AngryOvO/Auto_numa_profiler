@@ -64,11 +64,14 @@ void create_directory(const char *path) {
 /* 멀티스레딩을 위한 thread argument 구조체 */
 typedef struct {
     char file_path[512];       // debugfs 파일 전체 경로
-    char file_name[256];       // 파일 이름 (헤더에 사용)
+    char file_name[256];       // 파일 이름 (예: "node0_folio_stats")
     char temp_file_path[512];  // 각 스레드가 쓸 임시 파일 이름
 } thread_arg_t;
 
-/* 각 스레드가 실행할 함수: 해당 debugfs 파일을 읽어 임시 파일에 기록 */
+/* 각 스레드가 실행할 함수:
+   - 기존에는 헤더와 여분의 줄바꿈을 추가했으나,
+     이번 수정에서는 단순히 파일 데이터만 임시 파일에 기록합니다.
+*/
 void *read_debugfs_file(void *arg) {
     thread_arg_t *targ = (thread_arg_t *)arg;
     int fd = open(targ->file_path, O_RDONLY);
@@ -84,29 +87,43 @@ void *read_debugfs_file(void *arg) {
         pthread_exit(NULL);
     }
     
-    // 헤더 작성
-    fprintf(temp_fp, "=== File: %s ===\n", targ->file_name);
-    
+    // 헤더 부분 제거 – 오직 데이터만 쓰도록 함.
     char buffer[65536];
     ssize_t bytes_read;
-    while ((bytes_read = read(fd, buffer, sizeof(buffer) - 1)) > 0) {
-        buffer[bytes_read] = '\0';
-        fputs(buffer, temp_fp);
+    while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
+        if (fwrite(buffer, 1, bytes_read, temp_fp) != (size_t)bytes_read) {
+            perror("Error writing temporary file");
+            break;
+        }
     }
     if (bytes_read < 0) {
         perror("Error reading debugfs file in thread");
     }
-    
-    fprintf(temp_fp, "\n\n");
     
     fclose(temp_fp);
     close(fd);
     pthread_exit(NULL);
 }
 
+/* 파일 이름에서 노드 번호 추출 (예: "node0_folio_stats" → 0) */
+int get_node_number(const char *file_name) {
+    int node_num = -1;
+    if (sscanf(file_name, "node%d", &node_num) != 1) {
+        // 문제가 있으면 음수를 반환
+        return -1;
+    }
+    return node_num;
+}
+
 /*
- * 멀티스레드를 활용하여 각 debugfs 파일(노드별 folio_stats)을 읽고 각 스레드가 임시 파일에 기록,
- * 이후 이 임시 파일들을 하나의 스냅샷 파일로 병합하는 함수
+ * 멀티스레드를 활용하여 각 debugfs 파일(노드별 folio_stats)을 읽어 임시 파일에 기록,
+ * 이후 임시 파일들을 노드 번호 오름차순으로 정렬하여 하나의 스냅샷 파일로 병합하는 함수.
+ *
+ * 최종 스냅샷 파일에는
+ *   1111,1
+ *   2222,1
+ *   3333,1
+ * 와 같이 헤더 없이 순수 데이터만 저장됩니다.
  */
 void collect_data_multithread(const char *log_dir, pid_t workload_pid, float interval) {
     int snapshot = 0;
@@ -142,27 +159,39 @@ void collect_data_multithread(const char *log_dir, pid_t workload_pid, float int
         }
         closedir(dir);
 
-        // 각 파일마다 스레드 생성
-        pthread_t threads[MAX_FILES];
         thread_arg_t args[MAX_FILES];
+        pthread_t threads[MAX_FILES];
         for (int i = 0; i < file_count; i++) {
             strncpy(args[i].file_path, file_paths[i], sizeof(args[i].file_path));
             strncpy(args[i].file_name, file_names[i], sizeof(args[i].file_name));
-            // 임시 파일 이름 예: "<log_dir>/temp_snapshot_<snapshot>_file_<i>.tmp"
+            // 임시 파일 이름 생성 예: "<log_dir>/temp_snapshot_<snapshot>_file_<i>.tmp"
             snprintf(args[i].temp_file_path, sizeof(args[i].temp_file_path),
                      "%s/temp_snapshot_%d_file_%d.tmp", log_dir, snapshot, i);
-
+            
             if (pthread_create(&threads[i], NULL, read_debugfs_file, &args[i]) != 0) {
                 perror("Error creating thread");
             }
         }
-
         // 모든 스레드가 작업을 마칠 때까지 대기
         for (int i = 0; i < file_count; i++) {
             pthread_join(threads[i], NULL);
         }
-
-        // 임시 파일들을 최종 스냅샷 파일로 병합
+        
+        /* 임시 파일들을 노드 번호 기준으로 정렬 
+           args[i].file_name 에서 node 번호 추출하여 오름차순으로 정렬 */
+        for (int i = 0; i < file_count - 1; i++) {
+            for (int j = i + 1; j < file_count; j++) {
+                int node_i = get_node_number(args[i].file_name);
+                int node_j = get_node_number(args[j].file_name);
+                if (node_i > node_j) {
+                    thread_arg_t temp = args[i];
+                    args[i] = args[j];
+                    args[j] = temp;
+                }
+            }
+        }
+        
+        // 정렬된 순서대로 임시 파일들을 최종 스냅샷 파일로 병합 (헤더 없이, 데이터만 쭉 이어서)
         char snapshot_filename[256];
         snprintf(snapshot_filename, sizeof(snapshot_filename), "%s/folio_profiler_snapshot_%d.log", log_dir, snapshot);
         FILE *snapshot_fp = fopen(snapshot_filename, "w");
@@ -170,7 +199,7 @@ void collect_data_multithread(const char *log_dir, pid_t workload_pid, float int
             perror("Error creating snapshot file");
             break;
         }
-
+        
         for (int i = 0; i < file_count; i++) {
             FILE *temp_fp = fopen(args[i].temp_file_path, "r");
             if (temp_fp) {
@@ -186,7 +215,7 @@ void collect_data_multithread(const char *log_dir, pid_t workload_pid, float int
         }
         fclose(snapshot_fp);
         printf("Snapshot %d saved to %s\n", snapshot, snapshot_filename);
-
+        
         usleep((int)(interval * 1000000));
     }
     printf("Data collection completed. %d snapshots saved in %s\n", snapshot, log_dir);
@@ -247,9 +276,9 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    /* 프로파일링 모드에 따라 시스템 콜 호출
+    /* 프로파일링 모드 설정:
        --global 옵션이 설정되면 전체 시스템 프로파일링,
-       그렇지 않으면 특정 프로세스(PID) 프로파일링 */
+       아니면 특정 프로세스(PID) 프로파일링 */
     if (global_mode) {
         printf("Starting global folio log profiling...\n");
         if (syscall(SYS_START_GLOBAL_FOLIO_LOG) < 0) {
@@ -257,7 +286,6 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     } else {
-        // PID 전달 전에 조금 대기해서 워크로드가 안정적으로 시작되도록 함
         sleep(1);
         send_pid_to_syscall(pid);
     }
