@@ -114,14 +114,15 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
                      extent=extent, aspect="auto")
     plt.xlabel("Snapshot (Time)")
     plt.ylabel("PFN")
-    plt.title(f"Node {node} - Reference Count Heatmap")
+    plt.title(f"Node {node} - local/remote Heatmap")
     
     # y축에 PFN range 표시: 맨 아래는 nr.start, 맨 위는 nr.end
     plt.yticks([0, nRows], [nr.start, nr.end])
     
     # 색상바: 0, 1, 2 값을 tick으로 표시
     cbar = plt.colorbar(img, boundaries=boundaries, ticks=[0, 1, 2])
-    cbar.set_label("Reference Count")
+    cbar.set_label("RED - Local access / BLUE - Remote access / BLACK - No access")
+    cbar.ax.set_yticklabels(["No access", "Remote access", "Local access"])
     plt.tight_layout()
     
     filename = f"heatmap_node_{node}.png"
