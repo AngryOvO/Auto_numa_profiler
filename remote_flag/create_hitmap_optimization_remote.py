@@ -121,7 +121,6 @@ def visualize_heatmap_node_dask(nr, matrix, num_threads, global_vmax, output_wid
     
     # 색상바: 0, 1, 2 값을 tick으로 표시
     cbar = plt.colorbar(img, boundaries=boundaries, ticks=[0, 1, 2])
-    cbar.set_label("RED - Local access / BLUE - Remote access / BLACK - No access")
     cbar.ax.set_yticklabels(["No access", "Remote access", "Local access"])
     plt.tight_layout()
     
