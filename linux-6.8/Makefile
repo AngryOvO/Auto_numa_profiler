@@ -2,7 +2,7 @@
 VERSION = 6
 PATCHLEVEL = 8
 SUBLEVEL = 0
-EXTRAVERSION = -autonuma-profiler
+EXTRAVERSION = -autonuma-profiler-cxl-migrate
 NAME = Hurr durr I'ma ninja sloth
 
 # *DOCUMENTATION*
