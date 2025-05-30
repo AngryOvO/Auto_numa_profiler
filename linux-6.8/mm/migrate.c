@@ -2619,6 +2619,7 @@ int migrate_misplaced_folio(struct folio *folio, struct vm_area_struct *vma,
 	unsigned int nr_succeeded;
 	LIST_HEAD(migratepages);
 	int nr_pages = folio_nr_pages(folio);
+	int folio_last_nid = folio_nid(folio);
 
 	if(folio_last_nid == CXL_NODE)
 		goto out;
