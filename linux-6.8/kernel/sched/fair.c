@@ -48,12 +48,14 @@
 #include <linux/ratelimit.h>
 #include <linux/task_work.h>
 #include <linux/rbtree_augmented.h>
-
+#include <linux/kernel.h>
 #include <asm/switch_to.h>
 
 #include "sched.h"
 #include "stats.h"
 #include "autogroup.h"
+
+#define CXL_NODE 2
 
 /*
  * The initial- and re-scaling of tunables is configurable
@@ -1824,11 +1826,20 @@ static void numa_promotion_adjust_threshold(struct pglist_data *pgdat,
 }
 
 bool should_numa_migrate_memory(struct task_struct *p, struct folio *folio,
-				int src_nid, int dst_cpu)
+				int src_nid, int dst_cpu, int cxl_flag)
 {
 	struct numa_group *ng = deref_curr_numa_group(p);
 	int dst_nid = cpu_to_node(dst_cpu);
 	int last_cpupid, this_cpupid;
+
+	if(cxl_flag == 1 && src_nid == CXL_NODE)
+		return false;
+
+    if(cxl_flag == 1)
+    {
+        dst_nid = CXL_NODE;
+    }
+
 
 	/*
 	 * The pages in slow memory node should be migrated according
@@ -1864,6 +1875,7 @@ bool should_numa_migrate_memory(struct task_struct *p, struct folio *folio,
 	this_cpupid = cpu_pid_to_cpupid(dst_cpu, current->pid);
 	last_cpupid = folio_xchg_last_cpupid(folio, this_cpupid);
 
+
 	if (!(sysctl_numa_balancing_mode & NUMA_BALANCING_MEMORY_TIERING) &&
 	    !node_is_toptier(src_nid) && !cpupid_valid(last_cpupid))
 		return false;
@@ -1896,13 +1908,23 @@ bool should_numa_migrate_memory(struct task_struct *p, struct folio *folio,
 	 * act on an unlikely task<->page relation.
 	 */
 	if (!cpupid_pid_unset(last_cpupid) &&
-				cpupid_to_nid(last_cpupid) != dst_nid)
-		return false;
+				cpupid_to_nid(last_cpupid) != dst_nid){
+		if(cxl_flag == 1)
+		{
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
 
 	/* Always allow migrate on private faults */
 	if (cpupid_match_pid(p, last_cpupid))
 		return true;
 
+	if(cxl_flag == 1 && !cpupid_match_pid(p, last_cpupid))
+		return true;
 	/* A shared fault, but p->numa_group has not been set up yet. */
 	if (!ng)
 		return true;
@@ -3070,6 +3092,7 @@ void task_numa_fault(int last_cpupid, int mem_node, int pages, int flags)
 	int local = !!(flags & TNF_FAULT_LOCAL);
 	struct numa_group *ng;
 	int priv;
+
 
 	if (!static_branch_likely(&sched_numa_balancing))
 		return;
@@ -13231,3 +13254,4 @@ __init void init_sched_fair_class(void)
 #endif /* SMP */
 
 }
+

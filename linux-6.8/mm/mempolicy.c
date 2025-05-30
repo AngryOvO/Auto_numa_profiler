@@ -2488,6 +2488,10 @@ int mpol_misplaced(struct folio *folio, struct vm_area_struct *vma,
 	int thisnid = cpu_to_node(thiscpu);
 	int polnid = NUMA_NO_NODE;
 	int ret = NUMA_NO_NODE;
+	
+	int current_task_cpupid = cpu_pid_to_cpupid(thiscpu, current->pid);
+	int last_folio_cpupid = folio_xchg_last_cpupid(folio, current_task_cpupid);
+	int cxl_flag = 0;
 
 	pol = get_vma_policy(vma, addr, folio_order(folio), &ilx);
 	if (!(pol->flags & MPOL_F_MOF))
@@ -2539,17 +2543,29 @@ int mpol_misplaced(struct folio *folio, struct vm_area_struct *vma,
 	/* Migrate the folio towards the node whose CPU is referencing it */
 	if (pol->flags & MPOL_F_MORON) {
 		polnid = thisnid;
+		
+		if(!cpupid_match_pid(current, last_folio_cpupid) && (folio_mapcount(folio) >= 1))
+			cxl_flag = 1;
+			
 
 		if (!should_numa_migrate_memory(current, folio, curnid,
-						thiscpu))
+						thiscpu, cxl_flag))
 			goto out;
 	}
 
 	if (curnid != polnid)
 		ret = polnid;
+
+	if(cxl_flag)
+	{
+		polnid = CXL_NODE;
+		if (curnid != polnid)
+			ret = polnid;
+	}
+	
 out:
 	mpol_cond_put(pol);
-
+		
 	return ret;
 }
 

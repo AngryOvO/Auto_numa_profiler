@@ -57,6 +57,7 @@ struct movable_operations {
 	void (*putback_page)(struct page *);
 };
 
+
 /* Defined in mm/debug.c: */
 extern const char *migrate_reason_names[MR_TYPES];
 
@@ -142,11 +143,12 @@ const struct movable_operations *page_movable_ops(struct page *page)
 }
 
 #ifdef CONFIG_NUMA_BALANCING
+#define CXL_NODE 2
 int migrate_misplaced_folio(struct folio *folio, struct vm_area_struct *vma,
-			   int node);
+			   int node, int cxl_flag);
 #else
 static inline int migrate_misplaced_folio(struct folio *folio,
-					 struct vm_area_struct *vma, int node)
+					 struct vm_area_struct *vma, int node, int cxl_flag)
 {
 	return -EAGAIN; /* can't migrate now */
 }

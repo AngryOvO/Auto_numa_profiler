@@ -4965,7 +4965,7 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 	int target_nid;
 	pte_t pte, old_pte;
 	int flags = 0;
-
+	int cxl_flag = 0;
 
 	
 	/*
@@ -5034,11 +5034,14 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 		folio_put(folio);
 		goto out_map;
 	}
+	else if(target_nid == CXL_NODE)
+		cxl_flag = 1;
+		
 	pte_unmap_unlock(vmf->pte, vmf->ptl);
 	writable = false;
 
 	/* Migrate to the requested node */
-	if (migrate_misplaced_folio(folio, vma, target_nid)) {
+	if (migrate_misplaced_folio(folio, vma, target_nid, cxl_flag)) {
 
 		nid = target_nid;
 		flags |= TNF_MIGRATED;

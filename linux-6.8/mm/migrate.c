@@ -2611,7 +2611,7 @@ static int numamigrate_isolate_folio(pg_data_t *pgdat, struct folio *folio)
  * the folio that will be dropped by this function before returning.
  */
 int migrate_misplaced_folio(struct folio *folio, struct vm_area_struct *vma,
-			    int node)
+			    int node, int cxl_flag)
 {
 	pg_data_t *pgdat = NODE_DATA(node);
 	int isolated;
@@ -2620,7 +2620,8 @@ int migrate_misplaced_folio(struct folio *folio, struct vm_area_struct *vma,
 	LIST_HEAD(migratepages);
 	int nr_pages = folio_nr_pages(folio);
 
-
+	if(folio_last_nid == CXL_NODE)
+		goto out;
 	/*
 	 * Don't migrate file folios that are mapped in multiple processes
 	 * with execute permissions as they are probably shared libraries.
@@ -2630,7 +2631,10 @@ int migrate_misplaced_folio(struct folio *folio, struct vm_area_struct *vma,
 	 */
 	if (folio_estimated_sharers(folio) != 1 && folio_is_file_lru(folio) &&
 	    (vma->vm_flags & VM_EXEC))
-		goto out;
+	{
+		if(cxl_flag != 1)
+			goto out;
+	}
 
 	/*
 	 * Also do not migrate dirty folios as not all filesystems can move
